@@ -1,0 +1,22 @@
+[package]
+name = "areum"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+anyhow = "1.0.75"
+clap = { version = "4.4.8", features = ["derive"] }
+deno_ast = { version = "0.31.6", features = ["transpiling"] }
+deno_core = "0.232.0"
+deno_runtime = "0.133.0"
+globset = "0.4.13"
+lol_html = "1.2.0"
+reqwest = "0.11.22"
+serde = { version = "1.0.193", features = ["derive"] }
+serde_json = "1.0.108"
+serde_v8 = "0.141.0"
+tokio = "1.34.0"
+url = "2.4.1"
+walkdir = "2.4.0"

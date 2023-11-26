@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "jsx": "react-jsx",
+    "allowImportingTsExtensions": true,
+    "jsxImportSource": "areum",
+    "noEmit": true,
+    "module": "esnext",
+    "target": "esnext",
+    "isolatedModules": true,
+    "moduleDetection": "force",
+    "paths": {
+      "areum/jsx-runtime": ["./src/ts/jsx-runtime"]
+    }
+  }
+}
