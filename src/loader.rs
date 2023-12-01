@@ -2,6 +2,7 @@ use std::{path::Path, pin::Pin};
 
 use deno_ast::MediaType;
 use deno_core::{futures::FutureExt, ModuleType};
+use url::Url;
 
 pub struct Loader {
     client: reqwest::Client,
@@ -27,25 +28,24 @@ impl deno_core::ModuleLoader for Loader {
         specifier: &str,
         referrer: &str,
         _kind: deno_core::ResolutionKind,
-    ) -> Result<deno_core::ModuleSpecifier, deno_core::error::AnyError> {
+    ) -> Result<Url, deno_core::error::AnyError> {
         deno_core::resolve_import(specifier, referrer).map_err(|e| e.into())
     }
 
     fn load(
         &self,
-        module_specifier: &deno_core::ModuleSpecifier,
-        _maybe_referrer: Option<&deno_core::ModuleSpecifier>,
+        specifier: &Url,
+        _maybe_referrer: Option<&Url>,
         _is_dyn_import: bool,
     ) -> Pin<Box<deno_core::ModuleSourceFuture>> {
         async fn _load(
-            module_specifier: deno_core::ModuleSpecifier,
+            specifier: Url,
             client: reqwest::Client,
         ) -> Result<deno_core::ModuleSource, anyhow::Error> {
-            let (media_type, module_type, should_transpile) = determine_type(&module_specifier);
-
-            let code = match module_specifier.scheme() {
+            let module_type = module_type(&specifier);
+            let code = match specifier.scheme() {
                 "file" => {
-                    let path = module_specifier.to_file_path().unwrap();
+                    let path = specifier.to_file_path().unwrap();
                     let ext = match path.extension() {
                         None => {
                             let exts = ["tsx", "ts", "jsx", "js"];
@@ -59,18 +59,12 @@ impl deno_core::ModuleLoader for Loader {
                     let path = path.with_extension(ext);
                     std::fs::read_to_string(path)?
                 }
-                "https" => {
-                    client
-                        .get(module_specifier.as_str())
-                        .send()
-                        .await?
-                        .text()
-                        .await?
-                }
+                "https" => client.get(specifier.as_str()).send().await?.text().await?,
                 _ => panic!(),
             };
-            let code = if should_transpile {
-                transpile(&module_specifier, media_type, code)?
+
+            let code = if module_type == ModuleType::JavaScript {
+                transpile(&specifier, code)?
             } else {
                 code
             };
@@ -78,50 +72,48 @@ impl deno_core::ModuleLoader for Loader {
             Ok(deno_core::ModuleSource::new(
                 module_type,
                 code.into(),
-                &module_specifier,
+                &specifier,
             ))
         }
 
-        _load(module_specifier.clone(), self.client.clone()).boxed_local()
+        _load(specifier.clone(), self.client.clone()).boxed_local()
     }
 }
 
-pub(crate) fn transpile(
-    module_specifier: &deno_core::ModuleSpecifier,
-    media_type: MediaType,
-    code: String,
-) -> Result<String, anyhow::Error> {
-    let parsed = deno_ast::parse_module(deno_ast::ParseParams {
-        specifier: module_specifier.to_string(),
-        text_info: deno_ast::SourceTextInfo::from_string(code),
-        media_type,
-        capture_tokens: false,
-        scope_analysis: false,
-        maybe_syntax: None,
-    })?;
-    let transpiled = parsed.transpile(&deno_ast::EmitOptions {
-        jsx_import_source: Some("/areum".to_string()),
-        jsx_automatic: true,
-        ..Default::default()
-    })?;
-    Ok(transpiled.text)
-}
-
-pub(crate) fn determine_type(url: &deno_core::ModuleSpecifier) -> (MediaType, ModuleType, bool) {
-    let media_type = MediaType::from_specifier(url);
-    let (module_type, should_transpile) = match media_type {
-        MediaType::JavaScript | MediaType::Mjs | MediaType::Cjs => (ModuleType::JavaScript, false),
-        MediaType::Jsx => (ModuleType::JavaScript, true),
-        MediaType::TypeScript
-        | MediaType::Mts
-        | MediaType::Cts
-        | MediaType::Dts
-        | MediaType::Dmts
-        | MediaType::Dcts
-        | MediaType::Tsx => (ModuleType::JavaScript, true),
-        MediaType::Json => (ModuleType::Json, false),
-        _ => (ModuleType::JavaScript, true),
+/// Transpiles code if required
+pub(crate) fn transpile(specifier: &Url, code: String) -> Result<String, anyhow::Error> {
+    let media_type = MediaType::from_specifier(specifier);
+    let should_transpile = match media_type {
+        MediaType::JavaScript | MediaType::Cjs | MediaType::Mjs => false,
+        _ => true,
     };
 
-    (media_type, module_type, should_transpile)
+    let code = if should_transpile {
+        let parsed = deno_ast::parse_module(deno_ast::ParseParams {
+            specifier: specifier.to_string(),
+            text_info: deno_ast::SourceTextInfo::from_string(code),
+            media_type,
+            capture_tokens: false,
+            scope_analysis: false,
+            maybe_syntax: None,
+        })?;
+        let transpiled = parsed.transpile(&deno_ast::EmitOptions {
+            jsx_import_source: Some("/areum".to_string()),
+            jsx_automatic: true,
+            ..Default::default()
+        })?;
+        transpiled.text
+    } else {
+        code
+    };
+
+    Ok(code)
+}
+
+fn module_type(specifier: &Url) -> ModuleType {
+    let media_type = MediaType::from_specifier(specifier);
+    match media_type {
+        MediaType::Json => ModuleType::Json,
+        _ => ModuleType::JavaScript,
+    }
 }

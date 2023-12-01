@@ -12,14 +12,14 @@ use deno_runtime::{
 };
 use url::Url;
 
-use crate::loader::{determine_type, transpile, Loader};
+use crate::loader::{transpile, Loader};
 
 pub struct Runtime {
     root: PathBuf,
     worker: deno_runtime::worker::MainWorker,
-    main_mod_id: Option<usize>,
+    main_mod: Option<(PathBuf, usize)>,
     mods: HashMap<PathBuf, usize>,
-    mods_loaded: HashSet<usize>,
+    mods_evaled: HashSet<usize>,
 }
 
 impl Runtime {
@@ -33,12 +33,7 @@ impl Runtime {
         code: impl ToString,
     ) -> Result<usize, anyhow::Error> {
         let specifier = &Url::from_file_path(path).unwrap();
-        let (media_type, _, should_transpile) = determine_type(specifier);
-        let code = if should_transpile {
-            transpile(specifier, media_type, code.to_string())?
-        } else {
-            code.to_string()
-        };
+        let code = transpile(specifier, code.to_string())?;
 
         let mod_id = self
             .worker
@@ -56,29 +51,24 @@ impl Runtime {
         code: impl ToString,
     ) -> Result<usize, anyhow::Error> {
         let specifier = &Url::from_file_path(path).unwrap();
-        let (media_type, _, should_transpile) = determine_type(specifier);
-        let code = if should_transpile {
-            transpile(specifier, media_type, code.to_string())?
-        } else {
-            code.to_string()
-        };
+        let code = transpile(specifier, code.to_string())?;
 
         let mod_id = self
             .worker
             .js_runtime
-            .load_main_module(&Url::from_file_path(path).unwrap(), Some(code.into()))
+            .load_main_module(specifier, Some(code.into()))
             .await?;
 
         self.mods.insert(path.to_path_buf(), mod_id);
-        self.main_mod_id = Some(mod_id);
+        self.main_mod = Some((path.to_path_buf(), mod_id));
         Ok(mod_id)
     }
 
-    pub async fn run(&mut self) -> Result<(), anyhow::Error> {
+    pub async fn eval(&mut self) -> Result<(), anyhow::Error> {
         for &mod_id in self.mods.values() {
-            if !self.mods_loaded.contains(&mod_id) {
+            if !self.mods_evaled.contains(&mod_id) {
                 self.worker.evaluate_module(mod_id).await?;
-                self.mods_loaded.insert(mod_id);
+                self.mods_evaled.insert(mod_id);
             }
         }
         self.worker.run_event_loop(false).await?;
@@ -90,8 +80,10 @@ impl Runtime {
         key: &str,
     ) -> Result<(v8::Local<v8::Value>, v8::HandleScope), anyhow::Error> {
         let global = self.worker.js_runtime.get_module_namespace(
-            self.main_mod_id
-                .ok_or(anyhow!("main module not evaluated"))?,
+            self.main_mod
+                .clone()
+                .ok_or(anyhow!("main module not evaluated"))?
+                .1,
         )?;
         let mut scope = self.worker.js_runtime.handle_scope();
         let local = v8::Local::new(&mut scope, global);
@@ -132,9 +124,9 @@ impl RuntimeFactory {
         Runtime {
             root: self.root.clone(),
             worker,
-            main_mod_id: None,
+            main_mod: None,
             mods: HashMap::new(),
-            mods_loaded: HashSet::new(),
+            mods_evaled: HashSet::new(),
         }
     }
 }

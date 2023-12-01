@@ -6,9 +6,8 @@ use std::{
 use anyhow::anyhow;
 use deno_core::v8;
 use lol_html::html_content;
-use url::Url;
 
-use crate::{dom, loader::Loader, runtime::Runtime};
+use crate::{dom, runtime::Runtime};
 
 pub struct Page {
     runtime: Runtime,
@@ -86,10 +85,10 @@ impl Page {
                 include_str!("ts/areum.js"),
             )
             .await?;
-        self.runtime.run().await?;
+        self.runtime.eval().await?;
 
         self.runtime.load_main(&self.path, code).await?;
-        self.runtime.run().await?;
+        self.runtime.eval().await?;
 
         self.content = {
             let (default, mut scope) = self.runtime.get_export("default").await?;
