@@ -75,16 +75,19 @@ impl Runtime {
         Ok(())
     }
 
-    pub async fn get_export(
+    pub fn module_from_path(&self, path: &Path) -> Option<usize> {
+        self.mods.get(path).map(|x| *x)
+    }
+
+    /// Gets an export from the runtime by module ID.
+    ///
+    /// Comparable to doing `import { key } from module`.
+    pub async fn export(
         &mut self,
+        module: usize,
         key: &str,
     ) -> Result<(v8::Local<v8::Value>, v8::HandleScope), anyhow::Error> {
-        let global = self.worker.js_runtime.get_module_namespace(
-            self.main_mod
-                .clone()
-                .ok_or(anyhow!("main module not evaluated"))?
-                .1,
-        )?;
+        let global = self.worker.js_runtime.get_module_namespace(module)?;
         let mut scope = self.worker.js_runtime.handle_scope();
         let local = v8::Local::new(&mut scope, global);
 
@@ -96,6 +99,21 @@ impl Runtime {
             .ok_or(anyhow!("could not find {}", key))?;
 
         Ok((got, scope))
+    }
+
+    /// Gets an export from the runtime by module path.
+    ///
+    /// Comparable to doing `import { key } from module`.
+    pub async fn export_by_path(
+        &mut self,
+        path: &Path,
+        key: &str,
+    ) -> Result<(v8::Local<v8::Value>, v8::HandleScope), anyhow::Error> {
+        let module = self.module_from_path(path).ok_or(anyhow!(
+            "could not find module {}",
+            path.to_string_lossy()
+        ))?;
+        self.export(module, key).await
     }
 }
 

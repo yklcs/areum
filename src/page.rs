@@ -87,11 +87,11 @@ impl Page {
             .await?;
         self.runtime.eval().await?;
 
-        self.runtime.load_main(&self.path, code).await?;
+        let main = self.runtime.load_main(&self.path, code).await?;
         self.runtime.eval().await?;
 
         self.content = {
-            let (default, mut scope) = self.runtime.get_export("default").await?;
+            let (default, mut scope) = self.runtime.export(main, "default").await?;
             let func = v8::Local::<v8::Function>::try_from(default)?;
             let res = func.call(&mut scope, default, &[]).unwrap();
             let content = serde_v8::from_v8::<dom::Node>(&mut scope, res)?;
@@ -99,7 +99,7 @@ impl Page {
         };
 
         self.styles = {
-            let (styles, mut scope) = self.runtime.get_export("styles").await?;
+            let (styles, mut scope) = self.runtime.export(main, "styles").await?;
             if styles.is_null_or_undefined() {
                 None
             } else {
@@ -110,7 +110,7 @@ impl Page {
         };
 
         self.scripts = {
-            let (scripts, mut scope) = self.runtime.get_export("scripts").await?;
+            let (scripts, mut scope) = self.runtime.export(main, "scripts").await?;
             if scripts.is_null_or_undefined() {
                 None
             } else {
