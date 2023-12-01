@@ -1,4 +1,5 @@
 use std::{
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     rc::Rc,
 };
@@ -17,7 +18,8 @@ pub struct Runtime {
     root: PathBuf,
     worker: deno_runtime::worker::MainWorker,
     main_mod_id: Option<usize>,
-    mod_ids: Vec<usize>,
+    mods: HashMap<PathBuf, usize>,
+    mods_loaded: HashSet<usize>,
 }
 
 impl Runtime {
@@ -43,7 +45,8 @@ impl Runtime {
             .js_runtime
             .load_side_module(specifier, Some(code.into()))
             .await?;
-        self.mod_ids.push(mod_id);
+
+        self.mods.insert(path.to_path_buf(), mod_id);
         Ok(mod_id)
     }
 
@@ -65,14 +68,18 @@ impl Runtime {
             .js_runtime
             .load_main_module(&Url::from_file_path(path).unwrap(), Some(code.into()))
             .await?;
-        self.mod_ids.push(mod_id);
+
+        self.mods.insert(path.to_path_buf(), mod_id);
         self.main_mod_id = Some(mod_id);
         Ok(mod_id)
     }
 
     pub async fn run(&mut self) -> Result<(), anyhow::Error> {
-        for &mod_id in self.mod_ids.iter() {
-            self.worker.evaluate_module(mod_id).await?;
+        for &mod_id in self.mods.values() {
+            if !self.mods_loaded.contains(&mod_id) {
+                self.worker.evaluate_module(mod_id).await?;
+                self.mods_loaded.insert(mod_id);
+            }
         }
         self.worker.run_event_loop(false).await?;
         Ok(())
@@ -126,7 +133,8 @@ impl RuntimeFactory {
             root: self.root.clone(),
             worker,
             main_mod_id: None,
-            mod_ids: Vec::new(),
+            mods: HashMap::new(),
+            mods_loaded: HashSet::new(),
         }
     }
 }

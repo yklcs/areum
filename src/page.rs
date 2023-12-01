@@ -86,6 +86,8 @@ impl Page {
                 include_str!("ts/areum.js"),
             )
             .await?;
+        self.runtime.run().await?;
+
         self.runtime.load_main(&self.path, code).await?;
         self.runtime.run().await?;
 
