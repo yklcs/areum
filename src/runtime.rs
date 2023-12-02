@@ -109,10 +109,9 @@ impl Runtime {
         path: &Path,
         key: &str,
     ) -> Result<(v8::Local<v8::Value>, v8::HandleScope), anyhow::Error> {
-        let module = self.module_from_path(path).ok_or(anyhow!(
-            "could not find module {}",
-            path.to_string_lossy()
-        ))?;
+        let module = self
+            .module_from_path(path)
+            .ok_or(anyhow!("could not find module {}", path.to_string_lossy()))?;
         self.export(module, key).await
     }
 }
