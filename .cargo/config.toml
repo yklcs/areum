@@ -1,0 +1,3 @@
+[target."aarch64-apple-darwin"]
+# https://github.com/rust-lang/rust/issues/113783
+rustflags = ["-Clink-arg=-Wl,-ld_classic"]
