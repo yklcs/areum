@@ -94,7 +94,8 @@ impl Page {
             let (default, mut scope) = self.runtime.export(main, "default").await?;
             let func = v8::Local::<v8::Function>::try_from(default)?;
             let res = func.call(&mut scope, default, &[]).unwrap();
-            let content = serde_v8::from_v8::<dom::Node>(&mut scope, res)?;
+            let content = serde_v8::from_v8::<dom::Element>(&mut scope, res)?;
+
             Some(content.render())
         };
 

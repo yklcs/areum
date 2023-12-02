@@ -1,14 +1,20 @@
 const jsx = (element, props) => {
   if (typeof element === "function") {
-    return element({ ...props });
+    return {
+      type: "virtual",
+      data: { vtag: element.name, inner: element(props) },
+    };
   }
 
   const { children, ...rest } = props;
 
   return {
-    element,
-    children,
-    props: rest,
+    type: "html",
+    data: {
+      element,
+      children,
+      props: rest,
+    },
   };
 };
 

@@ -2,36 +2,66 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug)]
-pub struct Node {
-    element: String,
-    children: Child,
-    props: HashMap<String, serde_json::Value>,
+#[derive(Serialize, Deserialize, Debug, Clone)]
+#[serde(tag = "type", content = "data")]
+pub enum Element {
+    #[serde(rename = "html")]
+    Html(HtmlElement),
+    #[serde(rename = "virtual")]
+    Virtual(VirtualElement),
 }
 
-#[derive(Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct HtmlElement {
+    element: String,
+    children: Option<Child>,
+    props: HashMap<String, String>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct VirtualElement {
+    vtag: String,
+    inner: Box<Element>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(untagged)]
 enum Child {
     Null,
-    Node(Box<Node>),
+    Node(Box<Element>),
     Text(String),
     Array(Vec<Child>),
 }
 
-impl Node {
+fn render_props(props: &HashMap<String, String>) -> String {
+    props
+        .iter()
+        .map(|(k, v)| format!(" {}={}", k, v))
+        .collect::<Vec<_>>()
+        .join("")
+}
+
+impl Element {
+    pub fn reify(&self) -> HtmlElement {
+        match self {
+            Element::Html(html) => html.to_owned(),
+            Element::Virtual(virt) => virt.inner.reify(),
+        }
+    }
+
     pub fn render(&self) -> String {
-        let attrs = self
-            .props
-            .iter()
-            .map(|(k, v)| format!(" {}={}", k, v.to_string()))
-            .collect::<Vec<_>>()
-            .join("");
+        let html = self.reify();
+        let attrs = render_props(&html.props);
 
         format!(
-            "<{0}{2}>{1}</{0}>",
-            self.element,
-            self.children.render(),
-            attrs
+            "<{0}{2}>{3}{1}</{0}>",
+            html.element,
+            html.children.as_ref().map_or("".into(), |c| c.render()),
+            attrs,
+            match self {
+                Element::Html(_) => "".into(),
+                Element::Virtual(virt) => format!("<!--{}-->", &virt.vtag),
+            }
         )
     }
 }
