@@ -20,4 +20,6 @@ const jsx = (element, props) => {
 
 const jsxs = jsx;
 
-export { jsx, jsxs };
+const Fragment = ({ children }) => children;
+
+export { jsx, jsxs, Fragment };
