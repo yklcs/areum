@@ -1,16 +1,19 @@
 use std::{
-    cell::RefCell,
     io,
     path::{Path, PathBuf},
-    rc::Rc,
 };
 
 use anyhow::anyhow;
 use deno_core::v8;
 use lol_html::html_content;
+use rand::{distributions::Alphanumeric, Rng};
 
 use crate::{
-    dom::{self},
+    dom::{
+        self,
+        arena::{Arena, ArenaElement, ArenaId},
+        Children, Element,
+    },
     runtime::Runtime,
 };
 
@@ -99,8 +102,12 @@ impl Page {
             let (default, mut scope) = self.runtime.export(main, "default").await?;
             let func = v8::Local::<v8::Function>::try_from(default)?;
             let res = func.call(&mut scope, default, &[]).unwrap();
-            let dom = serde_v8::from_v8::<dom::BoxedElement>(&mut scope, res)?;
-            let html = dom.to_string();
+            let boxed_dom = serde_v8::from_v8::<dom::boxed::BoxedElement>(&mut scope, res)?;
+            let arena = &mut Arena::new();
+            let arena_dom = ArenaElement::from_boxed(arena, &boxed_dom, None);
+            scope_styles(arena_dom, arena);
+            let html = arena[arena_dom].to_string(arena);
+
             Some(html)
         };
 
@@ -127,5 +134,33 @@ impl Page {
         };
 
         Ok(())
+    }
+}
+
+fn scope_styles(id: ArenaId, arena: &mut Arena) {
+    let element = arena[id].clone();
+    if element.tag().as_deref() == Some("style") {
+        if let Some(parent) = element.parent() {
+            let id: String = rand::thread_rng()
+                .sample_iter(&Alphanumeric)
+                .take(8)
+                .map(char::from)
+                .collect();
+
+            arena[*parent].props_mut().insert("class".to_string(), id);
+        }
+    } else if element.children().is_some() {
+        fn walk_children(arena: &mut Arena, children: &Children<ArenaId>) {
+            match children {
+                Children::Element(el) => scope_styles(*el, arena),
+                Children::Elements(els) => {
+                    for el in els {
+                        walk_children(arena, el);
+                    }
+                }
+                _ => {}
+            }
+        }
+        walk_children(arena, element.children().unwrap());
     }
 }
