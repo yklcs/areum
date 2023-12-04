@@ -1,25 +1,26 @@
 const jsx = (element, props) => {
   if (typeof element === "function") {
     return {
-      type: "virtual",
-      data: { vtag: element.name, inner: element(props) },
+      vtag: element.name,
+      ...element(props),
     };
   }
 
   const { children, ...rest } = props;
 
   return {
-    type: "html",
-    data: {
-      element,
-      children,
-      props: rest,
-    },
+    tag: element,
+    children,
+    props: rest,
   };
 };
 
 const jsxs = jsx;
 
-const Fragment = ({ children }) => children;
+const Fragment = ({ children }) => ({
+  vtag: "Fragment",
+  children,
+  props: {},
+});
 
 export { jsx, jsxs, Fragment };

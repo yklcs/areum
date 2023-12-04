@@ -1,13 +1,18 @@
 use std::{
+    cell::RefCell,
     io,
     path::{Path, PathBuf},
+    rc::Rc,
 };
 
 use anyhow::anyhow;
 use deno_core::v8;
 use lol_html::html_content;
 
-use crate::{dom, runtime::Runtime};
+use crate::{
+    dom::{self},
+    runtime::Runtime,
+};
 
 pub struct Page {
     runtime: Runtime,
@@ -94,9 +99,9 @@ impl Page {
             let (default, mut scope) = self.runtime.export(main, "default").await?;
             let func = v8::Local::<v8::Function>::try_from(default)?;
             let res = func.call(&mut scope, default, &[]).unwrap();
-            let content = serde_v8::from_v8::<dom::Element>(&mut scope, res)?;
-
-            Some(content.render())
+            let dom = serde_v8::from_v8::<dom::BoxedElement>(&mut scope, res)?;
+            let html = dom.to_string();
+            Some(html)
         };
 
         self.styles = {

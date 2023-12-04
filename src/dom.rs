@@ -2,79 +2,102 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(tag = "type", content = "data")]
-pub enum Element {
-    #[serde(rename = "html")]
-    Html(HtmlElement),
-    #[serde(rename = "virtual")]
-    Virtual(VirtualElement),
+trait Element: ToString {
+    fn tag(&self) -> Option<String>;
+
+    fn vtag(&self) -> Option<String>;
+
+    fn children(&self) -> Option<&Children<Self>>
+    where
+        Self: Sized;
+
+    fn parent(&self) -> Option<&Self>
+    where
+        Self: Sized;
+
+    fn props(&self) -> HashMap<String, String>;
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct HtmlElement {
-    element: String,
-    children: Option<Child>,
+#[derive(Serialize, Deserialize, Debug)]
+#[serde(untagged)]
+enum Children<T> {
+    Element(T),
+    Elements(Vec<Self>),
+    Text(String),
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+pub struct BoxedElement {
+    tag: Option<String>,
+    vtag: Option<String>,
+    children: Option<Box<Children<Self>>>,
     props: HashMap<String, String>,
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-pub struct VirtualElement {
-    vtag: String,
-    inner: Box<Element>,
+impl Element for BoxedElement {
+    fn tag(&self) -> Option<String> {
+        self.tag.clone()
+    }
+
+    fn vtag(&self) -> Option<String> {
+        self.vtag.clone()
+    }
+
+    fn children(&self) -> Option<&Children<Self>>
+    where
+        Self: Sized,
+    {
+        self.children.as_deref()
+    }
+
+    fn parent(&self) -> Option<&Self>
+    where
+        Self: Sized,
+    {
+        None
+    }
+
+    fn props(&self) -> HashMap<String, String> {
+        self.props.clone()
+    }
 }
 
-#[derive(Serialize, Deserialize, Debug, Clone)]
-#[serde(untagged)]
-enum Child {
-    Null,
-    Node(Box<Element>),
-    Text(String),
-    Array(Vec<Child>),
-}
+impl ToString for BoxedElement {
+    fn to_string(&self) -> String {
+        let attrs = self
+            .props()
+            .iter()
+            .map(|(k, v)| format!(" {}={}", k, v))
+            .collect::<Vec<_>>()
+            .join("");
 
-fn render_props(props: &HashMap<String, String>) -> String {
-    props
-        .iter()
-        .map(|(k, v)| format!(" {}={}", k, v))
-        .collect::<Vec<_>>()
-        .join("")
-}
-
-impl Element {
-    pub fn reify(&self) -> HtmlElement {
-        match self {
-            Element::Html(html) => html.to_owned(),
-            Element::Virtual(virt) => virt.inner.reify(),
+        if self.vtag().as_deref() == Some("Fragment") {
+            self.children.as_ref().map_or("".into(), |c| c.to_string())
+        } else {
+            format!(
+                "<{0}{2}{3}>{1}</{0}>",
+                self.tag.clone().unwrap_or("".to_string()),
+                self.children.as_ref().map_or("".into(), |c| c.to_string()),
+                attrs,
+                self.vtag()
+                    .map(|s| format!(r#" component="{}""#, s))
+                    .unwrap_or("".into())
+            )
         }
     }
-
-    pub fn render(&self) -> String {
-        let html = self.reify();
-        let attrs = render_props(&html.props);
-
-        format!(
-            "<{0}{2}>{3}{1}</{0}>",
-            html.element,
-            html.children.as_ref().map_or("".into(), |c| c.render()),
-            attrs,
-            match self {
-                Element::Html(_) => "".into(),
-                Element::Virtual(virt) => format!("<!--{}-->", &virt.vtag),
-            }
-        )
-    }
 }
 
-impl Child {
-    fn render(&self) -> String {
+impl<T> ToString for Children<T>
+where
+    T: ToString,
+{
+    fn to_string(&self) -> String {
         match self {
-            Child::Null => "".to_string(),
-            Child::Node(node) => node.render(),
-            Child::Text(text) => text.clone(),
-            Child::Array(array) => array
+            Children::Element(el) => el.to_string(),
+            Children::Text(text) => text.clone(),
+            Children::Elements(els) => els
                 .iter()
-                .map(|c| c.render())
+                .map(ToString::to_string)
                 .collect::<Vec<_>>()
                 .join(""),
         }
