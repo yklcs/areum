@@ -2,16 +2,14 @@ use std::collections::HashMap;
 
 use serde::{Deserialize, Serialize};
 
-pub trait Element {
-    type Ref;
-
+pub trait Element<R> {
     fn tag(&self) -> Option<String>;
 
     fn vtag(&self) -> Option<String>;
 
-    fn children(&self) -> Option<&Children<Self::Ref>>;
+    fn children(&self) -> Option<&Children<R>>;
 
-    fn parent(&self) -> Option<&Self::Ref>;
+    fn parent(&self) -> Option<&R>;
 
     fn props(&self) -> &HashMap<String, String>;
     fn props_mut(&mut self) -> &mut HashMap<String, String>;
@@ -66,9 +64,7 @@ pub mod arena {
         parent: Option<ArenaId>,
     }
 
-    impl Element for ArenaElement {
-        type Ref = ArenaId;
-
+    impl Element<ArenaId> for ArenaElement {
         fn tag(&self) -> Option<String> {
             self.tag.clone()
         }
@@ -77,11 +73,11 @@ pub mod arena {
             self.vtag.clone()
         }
 
-        fn children(&self) -> Option<&Children<Self::Ref>> {
+        fn children(&self) -> Option<&Children<ArenaId>> {
             self.children.as_ref()
         }
 
-        fn parent(&self) -> Option<&Self::Ref> {
+        fn parent(&self) -> Option<&ArenaId> {
             self.parent.as_ref()
         }
 
@@ -198,9 +194,7 @@ pub mod boxed {
         props: HashMap<String, String>,
     }
 
-    impl Element for BoxedElement {
-        type Ref = Self;
-
+    impl Element<Self> for BoxedElement {
         fn tag(&self) -> Option<String> {
             self.tag.clone()
         }
@@ -209,17 +203,11 @@ pub mod boxed {
             self.vtag.clone()
         }
 
-        fn children(&self) -> Option<&Children<Self::Ref>>
-        where
-            Self: Sized,
-        {
+        fn children(&self) -> Option<&Children<Self>> {
             self.children.as_deref()
         }
 
-        fn parent(&self) -> Option<&Self::Ref>
-        where
-            Self: Sized,
-        {
+        fn parent(&self) -> Option<&Self> {
             None
         }
 
@@ -229,45 +217,6 @@ pub mod boxed {
 
         fn props_mut(&mut self) -> &mut HashMap<String, String> {
             &mut self.props
-        }
-    }
-
-    impl ToString for BoxedElement {
-        fn to_string(&self) -> String {
-            let attrs = self
-                .props()
-                .iter()
-                .map(|(k, v)| format!(r#" {}="{}""#, k, v))
-                .collect::<Vec<_>>()
-                .join("");
-
-            if self.vtag().as_deref() == Some("Fragment") {
-                self.children.as_ref().map_or("".into(), |c| c.to_string())
-            } else {
-                format!(
-                    "<{0}{2}{3}>{1}</{0}>",
-                    self.tag.clone().unwrap_or("".to_string()),
-                    self.children.as_ref().map_or("".into(), |c| c.to_string()),
-                    attrs,
-                    self.vtag()
-                        .map(|s| format!(r#" component="{}""#, s))
-                        .unwrap_or("".into())
-                )
-            }
-        }
-    }
-
-    impl ToString for Children<BoxedElement> {
-        fn to_string(&self) -> String {
-            match self {
-                Children::Element(el) => el.to_string(),
-                Children::Text(text) => text.clone(),
-                Children::Elements(els) => els
-                    .iter()
-                    .map(ToString::to_string)
-                    .collect::<Vec<_>>()
-                    .join(""),
-            }
         }
     }
 }
