@@ -75,8 +75,8 @@ impl Site {
         fs::create_dir_all(out)?;
         for path in self.page_paths.clone().into_iter() {
             let runtime = self.runtime_factory.spawn(&path);
-            let mut page = Page::new(runtime, &path);
-            page.eval().await?;
+            let mut page = Page::eval(runtime, &path).await?;
+            page.process()?;
 
             let fpath = out
                 .join(path.strip_prefix(&self.root)?)

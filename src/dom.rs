@@ -127,8 +127,8 @@ impl ToString for Prop {
 #[derive(Serialize, Deserialize, Debug, Clone)]
 #[serde(untagged)]
 pub enum Children<T> {
-    Element(T),
     Elements(Vec<Self>),
+    Element(T),
     Text(String),
 }
 
@@ -159,7 +159,7 @@ pub mod arena {
         }
     }
 
-    #[derive(Clone, Copy)]
+    #[derive(Clone, Copy, Debug)]
     pub struct ArenaId(usize);
 
     #[derive(Clone)]
