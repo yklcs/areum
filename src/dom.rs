@@ -62,7 +62,7 @@ pub mod arena {
         tag: Option<String>,
         vtag: Option<String>,
         props: HashMap<String, String>,
-        children: Option<Children<ArenaId>>,
+        pub children: Option<Children<ArenaId>>,
         parent: Option<ArenaId>,
     }
 
@@ -99,7 +99,7 @@ pub mod arena {
             let attrs = self
                 .props()
                 .iter()
-                .map(|(k, v)| format!(" {}={}", k, v))
+                .map(|(k, v)| format!(r#" {}="{}""#, k, v))
                 .collect::<Vec<_>>()
                 .join("");
 
@@ -237,7 +237,7 @@ pub mod boxed {
             let attrs = self
                 .props()
                 .iter()
-                .map(|(k, v)| format!(" {}={}", k, v))
+                .map(|(k, v)| format!(r#" {}="{}""#, k, v))
                 .collect::<Vec<_>>()
                 .join("");
 

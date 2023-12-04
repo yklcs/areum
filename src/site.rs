@@ -76,7 +76,7 @@ impl Site {
         for path in self.page_paths.clone().into_iter() {
             let runtime = self.runtime_factory.spawn(&path);
             let mut page = Page::new(runtime, &path);
-            page.run().await?;
+            page.eval().await?;
 
             let fpath = out
                 .join(path.strip_prefix(&self.root)?)

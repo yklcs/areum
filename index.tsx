@@ -6,20 +6,28 @@ const HelloWorldNestNest = () => <HelloWorldNest />;
 const HelloWorld = () => <h1>Hello world!</h1>;
 
 const Page = () => (
-  <main>
-    <HelloWorldNestNest />
-    <Component color="red">
-      <>
-      <span>Today is:</span>
-      <time>{format(new Date(), "yyyy-MM-dd")}</time>
-      </>
-    </Component>
-    <style>
-      {`span {
+  <html>
+    <head></head>
+    <body>
+      <main>
+        <HelloWorldNestNest />
+        <div>
+          <h2>wow!</h2>
+        </div>
+        <Component color="green">
+          <>
+            <span>Today is:</span>
+            <time>{format(new Date(), "yyyy-MM-dd")}</time>
+          </>
+        </Component>
+        <style>
+          {`h2 {
         color: blue;
       }`}
-    </style>
-  </main>
+        </style>
+      </main>
+    </body>
+  </html>
 );
 
 const scripts = () => {

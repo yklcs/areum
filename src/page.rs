@@ -1,10 +1,16 @@
 use std::{
+    collections::HashMap,
     io,
     path::{Path, PathBuf},
 };
 
 use anyhow::anyhow;
 use deno_core::v8;
+use lightningcss::{
+    rules::CssRule,
+    selector::Component,
+    stylesheet::{ParserFlags, ParserOptions, PrinterOptions, StyleSheet},
+};
 use lol_html::html_content;
 use rand::{distributions::Alphanumeric, Rng};
 
@@ -44,15 +50,7 @@ impl Page {
 
     pub fn render(&self, writer: &mut impl io::Write) -> Result<(), anyhow::Error> {
         let html = format!(
-            r#"
-<!DOCTYPE html>
-<html>
-<head></head>
-<body>
-    {}
-</body>
-</html>
-        "#,
+            r#"<!DOCTYPE html>{}"#,
             self.content.clone().ok_or(anyhow!("empty content"))?
         );
 
@@ -78,7 +76,7 @@ impl Page {
         Ok(())
     }
 
-    pub async fn run(&mut self) -> Result<(), anyhow::Error> {
+    pub async fn eval(&mut self) -> Result<(), anyhow::Error> {
         let code = std::fs::read_to_string(&self.path)?;
 
         self.runtime
@@ -105,7 +103,8 @@ impl Page {
             let boxed_dom = serde_v8::from_v8::<dom::boxed::BoxedElement>(&mut scope, res)?;
             let arena = &mut Arena::new();
             let arena_dom = ArenaElement::from_boxed(arena, &boxed_dom, None);
-            scope_styles(arena_dom, arena);
+            scope_styles(arena_dom, arena)?;
+
             let html = arena[arena_dom].to_string(arena);
 
             Some(html)
@@ -137,30 +136,99 @@ impl Page {
     }
 }
 
-fn scope_styles(id: ArenaId, arena: &mut Arena) {
+fn push_class(props: &mut HashMap<String, String>, class: String) {
+    if let Some(classes) = props.get("class") {
+        let mut classes = classes.clone();
+        classes.push(' ');
+        classes.push_str(&class);
+        props.insert("class".into(), classes);
+    } else {
+        props.insert("class".into(), class);
+    }
+}
+
+fn scope_styles(id: ArenaId, arena: &mut Arena) -> Result<(), anyhow::Error> {
     let element = arena[id].clone();
     if element.tag().as_deref() == Some("style") {
-        if let Some(parent) = element.parent() {
-            let id: String = rand::thread_rng()
-                .sample_iter(&Alphanumeric)
-                .take(8)
-                .map(char::from)
-                .collect();
+        let unique: String = rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(8)
+            .map(char::from)
+            .collect();
 
-            arena[*parent].props_mut().insert("class".to_string(), id);
+        if let Some(parent) = element.parent() {
+            fn reclass_children(arena: &mut Arena, children: &Children<ArenaId>, unique: String) {
+                match children {
+                    Children::Element(child_id) => {
+                        if arena[*child_id].vtag() == None {
+                            push_class(arena[*child_id].props_mut(), unique.clone());
+                            if let Some(grandchild) = arena[*child_id].clone().children() {
+                                reclass_children(arena, grandchild, unique.clone());
+                            }
+                        }
+                    }
+                    Children::Elements(children_ids) => {
+                        for children_id in children_ids {
+                            reclass_children(arena, children_id, unique.clone());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            let parent_cloned = arena[*parent].clone();
+            reclass_children(arena, parent_cloned.children().unwrap(), unique.clone());
+            push_class(arena[*parent].props_mut(), unique.clone());
+        }
+
+        if let Some(Children::Text(code)) = element.children() {
+            let mut stylesheet = StyleSheet::parse(
+                code,
+                ParserOptions {
+                    flags: ParserFlags::NESTING,
+                    ..Default::default()
+                },
+            )
+            .map_err(|e| anyhow!(e.to_string()))?;
+
+            for rule in &mut stylesheet.rules.0 {
+                match rule {
+                    CssRule::Style(style) => {
+                        for selector in style.selectors.0.iter_mut() {
+                            selector.append(Component::Class(unique.clone().into()))
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            let css = stylesheet.to_css(PrinterOptions {
+                minify: true,
+                ..Default::default()
+            })?;
+
+            arena[id].children = Some(Children::Text(css.code));
+        } else {
+            return Err(anyhow!("invalid child of <style>"));
         }
     } else if element.children().is_some() {
-        fn walk_children(arena: &mut Arena, children: &Children<ArenaId>) {
+        fn walk_children(
+            arena: &mut Arena,
+            children: &Children<ArenaId>,
+        ) -> Result<(), anyhow::Error> {
             match children {
                 Children::Element(el) => scope_styles(*el, arena),
                 Children::Elements(els) => {
                     for el in els {
-                        walk_children(arena, el);
+                        walk_children(arena, el)?;
                     }
+                    Ok(())
                 }
-                _ => {}
+                _ => Ok(()),
             }
         }
-        walk_children(arena, element.children().unwrap());
+        walk_children(arena, element.children().unwrap())?;
     }
+
+    Ok(())
 }
