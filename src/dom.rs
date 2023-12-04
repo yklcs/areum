@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
 
 pub trait Element<R> {
@@ -11,8 +12,116 @@ pub trait Element<R> {
 
     fn parent(&self) -> Option<&R>;
 
-    fn props(&self) -> &HashMap<String, String>;
-    fn props_mut(&mut self) -> &mut HashMap<String, String>;
+    fn props(&self) -> &Props;
+    fn props_mut(&mut self) -> &mut Props;
+}
+
+type PropValue = serde_json::Value;
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct Props(HashMap<String, PropValue>);
+
+impl Props {
+    pub fn get(&self, key: &str) -> Option<&PropValue> {
+        self.0.get(key)
+    }
+
+    pub fn get_mut(&mut self, key: &str) -> Option<&mut PropValue> {
+        self.0.get_mut(key)
+    }
+
+    pub fn set(&mut self, key: String, val: serde_json::Value) -> Option<PropValue> {
+        self.0.insert(key, val)
+    }
+
+    pub fn remove(&mut self, key: &str) -> Option<PropValue> {
+        self.0.remove(key)
+    }
+
+    pub fn append_string_space_separated(
+        &mut self,
+        key: String,
+        val: String,
+    ) -> Result<(), anyhow::Error> {
+        match self.get_mut(&key) {
+            None => {
+                self.set(key, val.into());
+                Ok(())
+            }
+            Some(serde_json::Value::String(str)) => {
+                str.push(' ');
+                str.push_str(&val);
+                Ok(())
+            }
+            Some(other) => Err(anyhow!(
+                "could not append {} to prop {} with non-string value {}",
+                val,
+                key,
+                other
+            )),
+        }
+    }
+}
+
+impl ToString for Props {
+    fn to_string(&self) -> String {
+        let mut stringified = self
+            .0
+            .iter()
+            .map(|kv| Prop::from(kv).to_string())
+            .collect::<Vec<_>>()
+            .join(" ");
+
+        if !stringified.is_empty() {
+            stringified.insert(0, ' ');
+        }
+
+        stringified
+    }
+}
+
+struct Prop(String, serde_json::Value);
+
+impl From<(&String, &serde_json::Value)> for Prop {
+    fn from(kv: (&String, &serde_json::Value)) -> Self {
+        Self(kv.0.clone(), kv.1.clone())
+    }
+}
+
+impl ToString for Prop {
+    fn to_string(&self) -> String {
+        let mut stringified = String::new();
+
+        fn push_prefix(str: &mut String, key: &str) {
+            str.push_str(key);
+            str.push_str(r#"=""#);
+        }
+
+        match &self.1 {
+            PropValue::Bool(true) => stringified.push_str(&self.0),
+            PropValue::Number(num) => {
+                push_prefix(&mut stringified, &self.0);
+                stringified.push_str(&num.to_string());
+                stringified.push('"');
+            }
+            PropValue::String(str) => {
+                push_prefix(&mut stringified, &self.0);
+                stringified.push_str(&str);
+                stringified.push('"');
+            }
+            PropValue::Array(_) => {
+                push_prefix(&mut stringified, &self.0);
+                stringified.push_str(r#"[Array]""#)
+            }
+            PropValue::Object(_) => {
+                stringified.push_str(&self.0);
+                stringified.push_str(r#"[Object]""#)
+            }
+            _ => {}
+        }
+
+        stringified
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -24,9 +133,7 @@ pub enum Children<T> {
 }
 
 pub mod arena {
-    use std::collections::HashMap;
-
-    use super::{boxed::BoxedElement, Children, Element};
+    use super::{boxed::BoxedElement, Children, Element, Props};
 
     pub struct Arena {
         arena: Vec<ArenaElement>,
@@ -59,7 +166,7 @@ pub mod arena {
     pub struct ArenaElement {
         tag: Option<String>,
         vtag: Option<String>,
-        props: HashMap<String, String>,
+        props: Props,
         pub children: Option<Children<ArenaId>>,
         parent: Option<ArenaId>,
     }
@@ -81,24 +188,17 @@ pub mod arena {
             self.parent.as_ref()
         }
 
-        fn props(&self) -> &HashMap<String, String> {
+        fn props(&self) -> &Props {
             &self.props
         }
 
-        fn props_mut(&mut self) -> &mut HashMap<String, String> {
+        fn props_mut(&mut self) -> &mut Props {
             &mut self.props
         }
     }
 
     impl ArenaElement {
         pub fn to_string(&self, arena: &Arena) -> String {
-            let attrs = self
-                .props()
-                .iter()
-                .map(|(k, v)| format!(r#" {}="{}""#, k, v))
-                .collect::<Vec<_>>()
-                .join("");
-
             if self.vtag().as_deref() == Some("Fragment") {
                 self.children
                     .as_ref()
@@ -110,7 +210,7 @@ pub mod arena {
                     self.children
                         .as_ref()
                         .map_or("".into(), |c| c.to_string(arena)),
-                    attrs,
+                    self.props.to_string(),
                     self.vtag()
                         .map(|s| format!(r#" component="{}""#, s))
                         .unwrap_or("".into())
@@ -181,9 +281,7 @@ pub mod arena {
 }
 
 pub mod boxed {
-    use std::collections::HashMap;
-
-    use super::{Children, Element};
+    use super::{Children, Element, Props};
     use serde::{Deserialize, Serialize};
 
     #[derive(Serialize, Deserialize, Debug)]
@@ -191,7 +289,7 @@ pub mod boxed {
         tag: Option<String>,
         vtag: Option<String>,
         children: Option<Box<Children<Self>>>,
-        props: HashMap<String, String>,
+        props: Props,
     }
 
     impl Element<Self> for BoxedElement {
@@ -211,11 +309,11 @@ pub mod boxed {
             None
         }
 
-        fn props(&self) -> &HashMap<String, String> {
+        fn props(&self) -> &Props {
             &self.props
         }
 
-        fn props_mut(&mut self) -> &mut HashMap<String, String> {
+        fn props_mut(&mut self) -> &mut Props {
             &mut self.props
         }
     }

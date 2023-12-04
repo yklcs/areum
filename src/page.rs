@@ -136,17 +136,6 @@ impl Page {
     }
 }
 
-fn push_class(props: &mut HashMap<String, String>, class: String) {
-    if let Some(classes) = props.get("class") {
-        let mut classes = classes.clone();
-        classes.push(' ');
-        classes.push_str(&class);
-        props.insert("class".into(), classes);
-    } else {
-        props.insert("class".into(), class);
-    }
-}
-
 fn scope_styles(id: ArenaId, arena: &mut Arena) -> Result<(), anyhow::Error> {
     let element = arena[id].clone();
     if element.tag().as_deref() == Some("style") {
@@ -157,28 +146,38 @@ fn scope_styles(id: ArenaId, arena: &mut Arena) -> Result<(), anyhow::Error> {
             .collect();
 
         if let Some(parent) = element.parent() {
-            fn reclass_children(arena: &mut Arena, children: &Children<ArenaId>, unique: String) {
+            fn reclass_children(
+                arena: &mut Arena,
+                children: &Children<ArenaId>,
+                unique: String,
+            ) -> Result<(), anyhow::Error> {
                 match children {
                     Children::Element(child_id) => {
                         if arena[*child_id].vtag() == None {
-                            push_class(arena[*child_id].props_mut(), unique.clone());
+                            arena[*child_id]
+                                .props_mut()
+                                .append_string_space_separated("class".into(), unique.clone())?;
                             if let Some(grandchild) = arena[*child_id].clone().children() {
-                                reclass_children(arena, grandchild, unique.clone());
+                                reclass_children(arena, grandchild, unique.clone())?;
                             }
                         }
+                        Ok(())
                     }
                     Children::Elements(children_ids) => {
                         for children_id in children_ids {
-                            reclass_children(arena, children_id, unique.clone());
+                            reclass_children(arena, children_id, unique.clone())?;
                         }
+                        Ok(())
                     }
-                    _ => {}
+                    _ => Ok(()),
                 }
             }
 
             let parent_cloned = arena[*parent].clone();
-            reclass_children(arena, parent_cloned.children().unwrap(), unique.clone());
-            push_class(arena[*parent].props_mut(), unique.clone());
+            reclass_children(arena, parent_cloned.children().unwrap(), unique.clone())?;
+            arena[*parent]
+                .props_mut()
+                .append_string_space_separated("class".into(), unique.clone())?;
         }
 
         if let Some(Children::Text(code)) = element.children() {
