@@ -24,12 +24,13 @@ impl Site {
         }
     }
 
-    pub fn new_with_root(root: &Path) -> Self {
-        Site {
-            root: root.to_path_buf(),
+    pub fn new_with_root(root: &Path) -> Result<Self, anyhow::Error> {
+        let root = fs::canonicalize(root)?;
+        Ok(Site {
+            runtime_factory: RuntimeFactory::new(&root),
+            root: root,
             page_paths: Vec::new(),
-            runtime_factory: RuntimeFactory::new(root),
-        }
+        })
     }
 
     pub fn read_root(&mut self) -> anyhow::Result<()> {
