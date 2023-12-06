@@ -1,6 +1,9 @@
+use anyhow::anyhow;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use std::{
-    env, fs,
+    env,
+    ffi::OsStr,
+    fs,
     io::{self, Write},
     path::{Path, PathBuf},
 };
@@ -72,16 +75,25 @@ impl Site {
         Ok(())
     }
 
-    pub async fn render_to_fs(&self, out: &Path) -> Result<(), anyhow::Error> {
-        fs::create_dir_all(out)?;
+    pub async fn render_to_fs(&self, outdir: &Path) -> Result<(), anyhow::Error> {
+        fs::create_dir_all(outdir)?;
         for path in self.page_paths.clone().into_iter() {
             let runtime = self.runtime_factory.spawn(&path);
             let mut page = Page::eval(runtime, &path).await?;
             page.process()?;
 
-            let fpath = out
+            let fname = outdir
                 .join(path.strip_prefix(&self.root)?)
-                .with_extension("html");
+                .with_extension("");
+
+            let fpath = if fname.file_name() == Some(OsStr::new("index")) {
+                fname.with_extension("html")
+            } else {
+                fname.join("index.html")
+            };
+
+            fs::create_dir_all(fpath.parent().ok_or(anyhow!("no parent path found"))?)?;
+
             let f = fs::File::create(fpath)?;
             let mut w = io::BufWriter::new(f);
             page.render(&mut w)?;
