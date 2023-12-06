@@ -36,7 +36,7 @@ impl Page {
         runtime
             .load_side(
                 &runtime.root().join("/areum/jsx-runtime"),
-                include_str!("ts/jsx-runtime.js"),
+                include_str!("ts/jsx-runtime.ts"),
             )
             .await?;
         runtime

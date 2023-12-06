@@ -82,7 +82,12 @@ impl deno_core::ModuleLoader for Loader {
 
 /// Transpiles code if required
 pub(crate) fn transpile(specifier: &Url, code: String) -> Result<String, anyhow::Error> {
-    let media_type = MediaType::from_specifier(specifier);
+    let media_type = if MediaType::from_specifier(specifier) == MediaType::Unknown {
+        MediaType::TypeScript
+    } else {
+        MediaType::from_specifier(specifier)
+    };
+
     let should_transpile = match media_type {
         MediaType::JavaScript | MediaType::Cjs | MediaType::Mjs => false,
         _ => true,
