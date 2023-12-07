@@ -1,9 +1,11 @@
-use std::{path::Path, pin::Pin};
+use std::pin::Pin;
 
+use anyhow::anyhow;
 use deno_ast::MediaType;
 use deno_core::{futures::FutureExt, ModuleType};
 use url::Url;
 
+#[derive(Clone)]
 pub struct Loader {
     client: reqwest::Client,
 }
@@ -19,6 +21,54 @@ impl Default for Loader {
 impl Loader {
     pub fn new() -> Self {
         Default::default()
+    }
+
+    async fn load_to_string(&self, specifier: &Url) -> Result<String, anyhow::Error> {
+        let module_type = module_type(&specifier);
+        let code = match specifier.scheme() {
+            "file" => {
+                let path = specifier.to_file_path().unwrap();
+                std::fs::read_to_string(path)?
+            }
+            "https" => {
+                self.client
+                    .get(specifier.as_str())
+                    .send()
+                    .await?
+                    .text()
+                    .await?
+            }
+            _ => return Err(anyhow!("invalid scheme in url {}", specifier.to_string())),
+        };
+
+        let code = if module_type == ModuleType::JavaScript {
+            transpile(&specifier, code)?
+        } else {
+            code
+        };
+
+        Ok(code)
+    }
+}
+
+impl deno_graph::source::Loader for Loader {
+    fn load(
+        &mut self,
+        specifier: &Url,
+        is_dynamic: bool,
+        cache_setting: deno_graph::source::CacheSetting,
+    ) -> deno_graph::source::LoadFuture {
+        let specifier = specifier.clone();
+        let loader = self.clone();
+        async move {
+            let code = loader.load_to_string(&specifier).await?;
+            Ok(Some(deno_graph::source::LoadResponse::Module {
+                content: code.into(),
+                specifier: specifier,
+                maybe_headers: None,
+            }))
+        }
+        .boxed_local()
     }
 }
 
@@ -38,45 +88,18 @@ impl deno_core::ModuleLoader for Loader {
         _maybe_referrer: Option<&Url>,
         _is_dyn_import: bool,
     ) -> Pin<Box<deno_core::ModuleSourceFuture>> {
-        async fn _load(
-            specifier: Url,
-            client: reqwest::Client,
-        ) -> Result<deno_core::ModuleSource, anyhow::Error> {
-            let module_type = module_type(&specifier);
-            let code = match specifier.scheme() {
-                "file" => {
-                    let path = specifier.to_file_path().unwrap();
-                    let ext = match path.extension() {
-                        None => {
-                            let exts = ["tsx", "ts", "jsx", "js"];
-                            exts.into_iter()
-                                .filter(|&ext| Path::exists(&path.with_extension(ext)))
-                                .last()
-                                .unwrap()
-                        }
-                        Some(ext) => ext.to_str().unwrap(),
-                    };
-                    let path = path.with_extension(ext);
-                    std::fs::read_to_string(path)?
-                }
-                "https" => client.get(specifier.as_str()).send().await?.text().await?,
-                _ => panic!(),
-            };
-
-            let code = if module_type == ModuleType::JavaScript {
-                transpile(&specifier, code)?
-            } else {
-                code
-            };
-
+        let specifier = specifier.clone();
+        let module_type = module_type(&specifier);
+        let loader = self.clone();
+        async move {
+            let code = loader.load_to_string(&specifier).await?;
             Ok(deno_core::ModuleSource::new(
                 module_type,
                 code.into(),
                 &specifier,
             ))
         }
-
-        _load(specifier.clone(), self.client.clone()).boxed_local()
+        .boxed_local()
     }
 }
 
