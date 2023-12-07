@@ -4,12 +4,14 @@ use std::{
 };
 
 use anyhow::anyhow;
+use deno_ast::EmitOptions;
 use deno_core::v8;
 use lightningcss::{
     rules::CssRule,
     selector::Component,
     stylesheet::{ParserFlags, ParserOptions, PrinterOptions, StyleSheet},
 };
+use lol_html::{element, html_content::ContentType, HtmlRewriter};
 use rand::{distributions::Alphanumeric, Rng};
 use url::Url;
 
@@ -30,6 +32,14 @@ pub struct Page {
 }
 
 impl Page {
+    pub fn runtime(&self) -> &Runtime {
+        &self.runtime
+    }
+
+    pub fn runtime_mut(&mut self) -> &mut Runtime {
+        &mut self.runtime
+    }
+
     pub async fn eval(runtime: Runtime, url: &Url) -> Result<Self, anyhow::Error> {
         if url.scheme() != "file" {
             return Err(anyhow!("only file URLs are currently supported for pages"));
@@ -71,22 +81,56 @@ impl Page {
         })
     }
 
-    pub fn render_to_string(&self) -> Result<String, anyhow::Error> {
+    pub fn render_to_string(&mut self) -> Result<String, anyhow::Error> {
         let mut output = Vec::new();
         self.render(&mut output)?;
         Ok(String::from_utf8(output)?)
     }
 
-    pub fn render(&self, writer: &mut impl io::Write) -> Result<(), anyhow::Error> {
+    pub fn render(&mut self, writer: &mut impl io::Write) -> Result<(), anyhow::Error> {
         let mut html = self.arena[self.dom].to_string(&self.arena);
         html.insert_str(0, "<!DOCTYPE html>");
-        writer.write_all(html.as_bytes())?;
+
+        let script = self.inline_bundle()?;
+        let mut rewriter = HtmlRewriter::new(
+            lol_html::Settings {
+                element_content_handlers: vec![element!("head", |el| {
+                    let tag = format!("<script>{}</script>", script);
+                    el.append(&tag, ContentType::Html);
+                    Ok(())
+                })],
+                ..Default::default()
+            },
+            |c: &[u8]| {
+                writer.write_all(c).unwrap();
+            },
+        );
+        rewriter.write(html.as_bytes())?;
+        rewriter.end()?;
+
         Ok(())
     }
 
     pub fn process(&mut self) -> Result<(), anyhow::Error> {
         self.scope_styles(self.dom)?;
         Ok(())
+    }
+
+    pub fn inline_bundle(&mut self) -> Result<String, anyhow::Error> {
+        self.runtime_mut().graph_mut().roots = vec![Url::from_file_path(&self.path).unwrap()];
+        let bundle = deno_emit::bundle_graph(
+            self.runtime().graph(),
+            deno_emit::BundleOptions {
+                bundle_type: deno_emit::BundleType::Module,
+                emit_options: EmitOptions {
+                    inline_source_map: false,
+                    ..Default::default()
+                },
+                emit_ignore_directives: false,
+                minify: true,
+            },
+        )?;
+        Ok(bundle.code)
     }
 
     pub fn walk_children(

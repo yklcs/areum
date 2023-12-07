@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::anyhow;
 use deno_core::v8;
-use deno_graph::ModuleGraph;
+use deno_graph::{BuildOptions, ModuleGraph};
 use deno_runtime::{
     permissions::PermissionsContainer,
     worker::{MainWorker, WorkerOptions},
@@ -26,6 +26,14 @@ pub struct Runtime {
 }
 
 impl Runtime {
+    pub fn graph(&self) -> &ModuleGraph {
+        &self.graph
+    }
+
+    pub fn graph_mut(&mut self) -> &mut ModuleGraph {
+        &mut self.graph
+    }
+
     pub fn root(&self) -> &Path {
         &self.root
     }
@@ -40,18 +48,11 @@ impl Runtime {
         let mod_id = self
             .worker
             .js_runtime
-            .load_side_module(url, Some(code.into()))
+            .load_side_module(url, Some(code.clone().into()))
             .await?;
 
         self.mods.insert(url.clone(), mod_id);
-
-        self.graph
-            .build(
-                self.mods.iter().map(|(k, _)| k.clone()).collect(),
-                &mut self.graph_loader,
-                Default::default(),
-            )
-            .await;
+        self.graph_loader.inject(url.clone(), code);
 
         Ok(mod_id)
     }
@@ -59,14 +60,6 @@ impl Runtime {
     pub async fn load_side_from_url(&mut self, url: &Url) -> Result<usize, anyhow::Error> {
         let mod_id = self.worker.js_runtime.load_side_module(url, None).await?;
         self.mods.insert(url.clone(), mod_id);
-
-        self.graph
-            .build(
-                self.mods.iter().map(|(k, _)| k.clone()).collect(),
-                &mut self.graph_loader,
-                Default::default(),
-            )
-            .await;
 
         Ok(mod_id)
     }
@@ -81,12 +74,13 @@ impl Runtime {
         let mod_id = self
             .worker
             .js_runtime
-            .load_main_module(url, Some(code.into()))
+            .load_main_module(url, Some(code.clone().into()))
             .await?;
 
         self.mods.insert(url.clone(), mod_id);
         self.main_mod = Some((url.clone(), mod_id));
 
+        self.graph_loader.inject(url.clone(), code);
         self.graph
             .build(
                 self.mods.iter().map(|(k, _)| k.clone()).collect(),

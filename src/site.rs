@@ -1,4 +1,5 @@
 use anyhow::anyhow;
+use deno_ast::EmitOptions;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use std::{
     env,
@@ -80,7 +81,8 @@ impl Site {
         fs::create_dir_all(outdir)?;
         for path in self.page_paths.clone().into_iter() {
             let runtime = self.runtime_factory.spawn(&path);
-            let mut page = Page::eval(runtime, &Url::from_file_path(&path).unwrap()).await?;
+            let url = Url::from_file_path(&path).unwrap();
+            let mut page = Page::eval(runtime, &url).await?;
             page.process()?;
 
             let fname = outdir

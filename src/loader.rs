@@ -1,21 +1,14 @@
-use std::pin::Pin;
+use std::{collections::HashMap, pin::Pin};
 
 use anyhow::anyhow;
 use deno_ast::MediaType;
 use deno_core::{futures::FutureExt, ModuleType};
 use url::Url;
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct Loader {
     client: reqwest::Client,
-}
-
-impl Default for Loader {
-    fn default() -> Self {
-        Loader {
-            client: Default::default(),
-        }
-    }
+    pub(crate) injected: HashMap<Url, String>,
 }
 
 impl Loader {
@@ -23,7 +16,15 @@ impl Loader {
         Default::default()
     }
 
+    pub fn inject(&mut self, url: Url, code: String) {
+        self.injected.insert(url, code);
+    }
+
     async fn load_to_string(&self, specifier: &Url) -> Result<String, anyhow::Error> {
+        if let Some(code) = self.injected.get(specifier) {
+            return Ok(code.clone());
+        }
+
         let module_type = module_type(&specifier);
         let code = match specifier.scheme() {
             "file" => {
