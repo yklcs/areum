@@ -17,8 +17,8 @@ use crate::loader::{transpile, Loader};
 pub struct Runtime {
     root: PathBuf,
     worker: deno_runtime::worker::MainWorker,
-    main_mod: Option<(PathBuf, usize)>,
-    mods: HashMap<PathBuf, usize>,
+    main_mod: Option<(Url, usize)>,
+    mods: HashMap<Url, usize>,
     mods_evaled: HashSet<usize>,
 }
 
@@ -29,38 +29,49 @@ impl Runtime {
 
     pub async fn load_side(
         &mut self,
-        path: &Path,
+        url: &Url,
         code: impl ToString,
     ) -> Result<usize, anyhow::Error> {
-        let specifier = &Url::from_file_path(path).unwrap();
-        let code = transpile(specifier, code.to_string())?;
+        let code = transpile(url, code.to_string())?;
 
         let mod_id = self
             .worker
             .js_runtime
-            .load_side_module(specifier, Some(code.into()))
+            .load_side_module(url, Some(code.into()))
             .await?;
 
-        self.mods.insert(path.to_path_buf(), mod_id);
+        self.mods.insert(url.clone(), mod_id);
+        Ok(mod_id)
+    }
+
+    pub async fn load_side_from_url(&mut self, url: &Url) -> Result<usize, anyhow::Error> {
+        let mod_id = self.worker.js_runtime.load_side_module(url, None).await?;
+        self.mods.insert(url.clone(), mod_id);
         Ok(mod_id)
     }
 
     pub async fn load_main(
         &mut self,
-        path: &Path,
+        url: &Url,
         code: impl ToString,
     ) -> Result<usize, anyhow::Error> {
-        let specifier = &Url::from_file_path(path).unwrap();
-        let code = transpile(specifier, code.to_string())?;
+        let code = transpile(url, code.to_string())?;
 
         let mod_id = self
             .worker
             .js_runtime
-            .load_main_module(specifier, Some(code.into()))
+            .load_main_module(url, Some(code.into()))
             .await?;
 
-        self.mods.insert(path.to_path_buf(), mod_id);
-        self.main_mod = Some((path.to_path_buf(), mod_id));
+        self.mods.insert(url.clone(), mod_id);
+        self.main_mod = Some((url.clone(), mod_id));
+        Ok(mod_id)
+    }
+
+    pub async fn load_main_from_url(&mut self, url: &Url) -> Result<usize, anyhow::Error> {
+        let mod_id = self.worker.js_runtime.load_main_module(url, None).await?;
+        self.mods.insert(url.clone(), mod_id);
+        self.main_mod = Some((url.clone(), mod_id));
         Ok(mod_id)
     }
 
@@ -75,8 +86,8 @@ impl Runtime {
         Ok(())
     }
 
-    pub fn module_from_path(&self, path: &Path) -> Option<usize> {
-        self.mods.get(path).map(|x| *x)
+    pub fn module_from_url(&self, url: &Url) -> Option<usize> {
+        self.mods.get(url).map(|x| *x)
     }
 
     /// Gets an export from the runtime by module ID.
@@ -101,17 +112,17 @@ impl Runtime {
         Ok((got, scope))
     }
 
-    /// Gets an export from the runtime by module path.
+    /// Gets an export from the runtime by module url.
     ///
     /// Comparable to doing `import { key } from module`.
-    pub async fn export_by_path(
+    pub async fn export_by_url(
         &mut self,
-        path: &Path,
+        url: &Url,
         key: &str,
     ) -> Result<(v8::Local<v8::Value>, v8::HandleScope), anyhow::Error> {
         let module = self
-            .module_from_path(path)
-            .ok_or(anyhow!("could not find module {}", path.to_string_lossy()))?;
+            .module_from_url(url)
+            .ok_or(anyhow!("could not find module {}", url.to_string()))?;
         self.export(module, key).await
     }
 }

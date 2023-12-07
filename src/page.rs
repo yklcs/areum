@@ -11,6 +11,7 @@ use lightningcss::{
     stylesheet::{ParserFlags, ParserOptions, PrinterOptions, StyleSheet},
 };
 use rand::{distributions::Alphanumeric, Rng};
+use url::Url;
 
 use crate::{
     dom::{
@@ -29,25 +30,28 @@ pub struct Page {
 }
 
 impl Page {
-    pub async fn eval(runtime: Runtime, path: &Path) -> Result<Self, anyhow::Error> {
-        let code = std::fs::read_to_string(path)?;
+    pub async fn eval(runtime: Runtime, url: &Url) -> Result<Self, anyhow::Error> {
+        if url.scheme() != "file" {
+            return Err(anyhow!("only file URLs are currently supported for pages"));
+        }
+
         let mut runtime = runtime;
 
         runtime
             .load_side(
-                &runtime.root().join("/areum/jsx-runtime"),
+                &Url::from_file_path(runtime.root().join("/areum/jsx-runtime")).unwrap(),
                 include_str!("ts/jsx-runtime.ts"),
             )
             .await?;
         runtime
             .load_side(
-                &runtime.root().join("__areum.js"),
+                &Url::from_file_path(runtime.root().join("__areum.js")).unwrap(),
                 include_str!("ts/areum.js"),
             )
             .await?;
         runtime.eval().await?;
 
-        let main = runtime.load_main(&path, code).await?;
+        let main = runtime.load_main_from_url(url).await?;
         runtime.eval().await?;
 
         let mut arena = Arena::new();
@@ -61,7 +65,7 @@ impl Page {
 
         Ok(Page {
             runtime,
-            path: path.to_path_buf(),
+            path: url.to_file_path().unwrap(),
             dom,
             arena,
         })

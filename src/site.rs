@@ -7,6 +7,7 @@ use std::{
     io::{self, Write},
     path::{Path, PathBuf},
 };
+use url::Url;
 use walkdir::{DirEntry, WalkDir};
 
 use crate::{page::Page, runtime::RuntimeFactory};
@@ -79,7 +80,7 @@ impl Site {
         fs::create_dir_all(outdir)?;
         for path in self.page_paths.clone().into_iter() {
             let runtime = self.runtime_factory.spawn(&path);
-            let mut page = Page::eval(runtime, &path).await?;
+            let mut page = Page::eval(runtime, &Url::from_file_path(&path).unwrap()).await?;
             page.process()?;
 
             let fname = outdir
