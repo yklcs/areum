@@ -6,6 +6,7 @@ use std::{
 
 use anyhow::anyhow;
 use deno_core::v8;
+use deno_graph::ModuleGraph;
 use deno_runtime::{
     permissions::PermissionsContainer,
     worker::{MainWorker, WorkerOptions},
@@ -20,6 +21,8 @@ pub struct Runtime {
     main_mod: Option<(Url, usize)>,
     mods: HashMap<Url, usize>,
     mods_evaled: HashSet<usize>,
+    graph: ModuleGraph,
+    graph_loader: Loader,
 }
 
 impl Runtime {
@@ -41,12 +44,30 @@ impl Runtime {
             .await?;
 
         self.mods.insert(url.clone(), mod_id);
+
+        self.graph
+            .build(
+                self.mods.iter().map(|(k, _)| k.clone()).collect(),
+                &mut self.graph_loader,
+                Default::default(),
+            )
+            .await;
+
         Ok(mod_id)
     }
 
     pub async fn load_side_from_url(&mut self, url: &Url) -> Result<usize, anyhow::Error> {
         let mod_id = self.worker.js_runtime.load_side_module(url, None).await?;
         self.mods.insert(url.clone(), mod_id);
+
+        self.graph
+            .build(
+                self.mods.iter().map(|(k, _)| k.clone()).collect(),
+                &mut self.graph_loader,
+                Default::default(),
+            )
+            .await;
+
         Ok(mod_id)
     }
 
@@ -65,6 +86,15 @@ impl Runtime {
 
         self.mods.insert(url.clone(), mod_id);
         self.main_mod = Some((url.clone(), mod_id));
+
+        self.graph
+            .build(
+                self.mods.iter().map(|(k, _)| k.clone()).collect(),
+                &mut self.graph_loader,
+                Default::default(),
+            )
+            .await;
+
         Ok(mod_id)
     }
 
@@ -72,6 +102,15 @@ impl Runtime {
         let mod_id = self.worker.js_runtime.load_main_module(url, None).await?;
         self.mods.insert(url.clone(), mod_id);
         self.main_mod = Some((url.clone(), mod_id));
+
+        self.graph
+            .build(
+                self.mods.iter().map(|(k, _)| k.clone()).collect(),
+                &mut self.graph_loader,
+                Default::default(),
+            )
+            .await;
+
         Ok(mod_id)
     }
 
@@ -155,6 +194,8 @@ impl RuntimeFactory {
             main_mod: None,
             mods: HashMap::new(),
             mods_evaled: HashSet::new(),
+            graph: ModuleGraph::new(deno_graph::GraphKind::All),
+            graph_loader: Loader::new(),
         }
     }
 }
