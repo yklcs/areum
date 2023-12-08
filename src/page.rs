@@ -1,15 +1,12 @@
-use std::{
-    io,
-    path::{Path, PathBuf},
-};
+use std::{convert::Infallible, io, path::PathBuf};
 
 use anyhow::anyhow;
 use deno_ast::EmitOptions;
 use deno_core::v8;
 use lightningcss::{
-    rules::CssRule,
-    selector::Component,
+    selector::{Component, Selector},
     stylesheet::{ParserFlags, ParserOptions, PrinterOptions, StyleSheet},
+    visitor::Visit,
 };
 use lol_html::{element, html_content::ContentType, HtmlRewriter};
 use rand::{distributions::Alphanumeric, Rng};
@@ -29,6 +26,7 @@ pub struct Page {
     path: PathBuf,
     dom: ArenaId,
     arena: Arena,
+    style: String,
 }
 
 impl Page {
@@ -68,14 +66,36 @@ impl Page {
         let dom = {
             let (default, mut scope) = runtime.export(main, "default").await?;
             let func = v8::Local::<v8::Function>::try_from(default)?;
-            let res = func.call(&mut scope, default, &[]).unwrap();
-            let boxed_dom = serde_v8::from_v8::<dom::boxed::BoxedElement>(&mut scope, res)?;
+            let obj = func
+                .call(&mut scope, default, &[])
+                .unwrap()
+                .to_object(&mut scope)
+                .unwrap();
+
+            let style_key = v8::String::new(&mut scope, "style").unwrap();
+            let style = func
+                .to_object(&mut scope)
+                .unwrap()
+                .get(&mut scope, style_key.into());
+
+            if let Some(style) = style {
+                let style = if style.is_function() {
+                    let style_func = v8::Local::<v8::Function>::try_from(style)?;
+                    style_func.call(&mut scope, style, &[]).unwrap()
+                } else {
+                    style
+                };
+                obj.set(&mut scope, style_key.into(), style);
+            }
+
+            let boxed_dom = serde_v8::from_v8::<dom::boxed::BoxedElement>(&mut scope, obj.into())?;
             ArenaElement::from_boxed(&mut arena, &boxed_dom, None)
         };
 
         Ok(Page {
             runtime,
             path: url.to_file_path().unwrap(),
+            style: String::new(),
             dom,
             arena,
         })
@@ -94,11 +114,19 @@ impl Page {
         let script = self.inline_bundle()?;
         let mut rewriter = HtmlRewriter::new(
             lol_html::Settings {
-                element_content_handlers: vec![element!("head", |el| {
-                    let tag = format!("<script>{}</script>", script);
-                    el.append(&tag, ContentType::Html);
-                    Ok(())
-                })],
+                element_content_handlers: vec![
+                    element!("head", |el| {
+                        let tag = format!("<script>{}</script>", script);
+                        el.append(&tag, ContentType::Html);
+                        Ok(())
+                    }),
+                    element!("head", |el| {
+                        let tag = format!("<style>{}</style>", self.style);
+                        el.append(&tag, ContentType::Html);
+                        Ok(())
+                    }),
+                ],
+
                 ..Default::default()
             },
             |c: &[u8]| {
@@ -112,7 +140,7 @@ impl Page {
     }
 
     pub fn process(&mut self) -> Result<(), anyhow::Error> {
-        self.scope_styles(self.dom)?;
+        self.apply_styles(self.dom)?;
         Ok(())
     }
 
@@ -158,19 +186,63 @@ impl Page {
         Ok(())
     }
 
-    pub fn scope_styles(&mut self, id: ArenaId) -> Result<(), anyhow::Error> {
+    pub fn apply_styles(&mut self, id: ArenaId) -> Result<(), anyhow::Error> {
         let element = self.arena[id].clone();
 
-        if element.tag().as_deref() == Some("style") {
-            let unique: String = rand::thread_rng()
+        struct CssVisitor {
+            unique: String,
+        }
+        impl<'i> lightningcss::visitor::Visitor<'i> for CssVisitor {
+            type Error = Infallible;
+
+            fn visit_types(&self) -> lightningcss::visitor::VisitTypes {
+                lightningcss::visit_types!(SELECTORS)
+            }
+
+            fn visit_selector(&mut self, selector: &mut Selector<'i>) -> Result<(), Self::Error> {
+                selector.append(Component::Class(self.unique.clone().into()));
+                Ok(())
+            }
+        }
+
+        if let Some(style) = element.style() {
+            let mut unique: String = rand::thread_rng()
                 .sample_iter(&Alphanumeric)
                 .take(8)
                 .map(char::from)
                 .collect();
+            unique.insert_str(0, "style-");
 
-            if let Some(parent) = element.parent() {
-                let parent_cloned = self.arena[*parent].clone();
-                self.walk_children(parent_cloned.children().unwrap(), &mut |self_, id| {
+            let mut stylesheet = StyleSheet::parse(
+                &style,
+                ParserOptions {
+                    flags: ParserFlags::NESTING,
+                    ..Default::default()
+                },
+            )
+            .map_err(|e| anyhow!(e.to_string()))?;
+
+            // Rescope stylesheet with unique ID class
+            let visitor = &mut CssVisitor {
+                unique: unique.clone(),
+            };
+            stylesheet.visit(visitor)?;
+
+            let css = stylesheet.to_css(PrinterOptions {
+                minify: true,
+                ..Default::default()
+            })?;
+
+            self.style += &css.code;
+
+            // Apply unique class to self
+            self.arena[id]
+                .props_mut()
+                .append_string_space_separated("class".into(), unique.clone())?;
+
+            // Apply unique class to children, except other vtags
+            if let Some(children) = element.children() {
+                self.walk_children(children, &mut |self_, id| {
                     if self_.arena[id].vtag() == None {
                         let _ = self_.arena[id]
                             .props_mut()
@@ -178,45 +250,12 @@ impl Page {
                     }
                     Ok(self_.arena[id].vtag() == None)
                 })?;
-
-                self.arena[*parent]
-                    .props_mut()
-                    .append_string_space_separated("class".into(), unique.clone())?;
             }
+        }
 
-            if let Some(Children::Text(code)) = element.children() {
-                let mut stylesheet = StyleSheet::parse(
-                    code,
-                    ParserOptions {
-                        flags: ParserFlags::NESTING,
-                        ..Default::default()
-                    },
-                )
-                .map_err(|e| anyhow!(e.to_string()))?;
-
-                for rule in &mut stylesheet.rules.0 {
-                    match rule {
-                        CssRule::Style(style) => {
-                            for selector in style.selectors.0.iter_mut() {
-                                selector.append(Component::Class(unique.clone().into()))
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-
-                let css = stylesheet.to_css(PrinterOptions {
-                    minify: true,
-                    ..Default::default()
-                })?;
-
-                self.arena[id].children = Some(Children::Text(css.code));
-            } else {
-                return Err(anyhow!("invalid child of <style>"));
-            }
-        } else if let Some(children) = element.children() {
+        if let Some(children) = element.children() {
             self.walk_children(children, &mut |self_, id| {
-                self_.scope_styles(id)?;
+                self_.apply_styles(id)?;
                 Ok(false)
             })?;
         }

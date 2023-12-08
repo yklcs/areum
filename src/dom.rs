@@ -5,12 +5,12 @@ use serde::{Deserialize, Serialize};
 
 pub trait Element<R> {
     fn tag(&self) -> Option<String>;
-
     fn vtag(&self) -> Option<String>;
 
     fn children(&self) -> Option<&Children<R>>;
-
     fn parent(&self) -> Option<&R>;
+
+    fn style(&self) -> Option<String>;
 
     fn props(&self) -> &Props;
     fn props_mut(&mut self) -> &mut Props;
@@ -167,7 +167,8 @@ pub mod arena {
         tag: Option<String>,
         vtag: Option<String>,
         props: Props,
-        pub children: Option<Children<ArenaId>>,
+        style: Option<String>,
+        children: Option<Children<ArenaId>>,
         parent: Option<ArenaId>,
     }
 
@@ -178,6 +179,10 @@ pub mod arena {
 
         fn vtag(&self) -> Option<String> {
             self.vtag.clone()
+        }
+
+        fn style(&self) -> Option<String> {
+            self.style.clone()
         }
 
         fn children(&self) -> Option<&Children<ArenaId>> {
@@ -229,6 +234,7 @@ pub mod arena {
                 tag: boxed.tag(),
                 vtag: boxed.vtag(),
                 props: boxed.props().clone(),
+                style: boxed.style(),
                 children: None,
                 parent,
             };
@@ -288,6 +294,7 @@ pub mod boxed {
     pub struct BoxedElement {
         tag: Option<String>,
         vtag: Option<String>,
+        style: Option<String>,
         children: Option<Box<Children<Self>>>,
         props: Props,
     }
@@ -299,6 +306,10 @@ pub mod boxed {
 
         fn vtag(&self) -> Option<String> {
             self.vtag.clone()
+        }
+
+        fn style(&self) -> Option<String> {
+            self.style.clone()
         }
 
         fn children(&self) -> Option<&Children<Self>> {

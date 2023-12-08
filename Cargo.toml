@@ -14,7 +14,7 @@ deno_emit = "0.32.0"
 deno_graph = "0.62.1"
 deno_runtime = "0.133.0"
 globset = "0.4.13"
-lightningcss = "1.0.0-alpha.51"
+lightningcss = { version = "1.0.0-alpha.51", features = ["visitor"] }
 lol_html = "1.2.0"
 rand = "0.8.5"
 reqwest = "0.11.22"
