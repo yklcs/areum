@@ -13,12 +13,34 @@ The core idea is to embed the Deno runtime into a static site generator, allowin
 ```tsx
 import Layout from "./_Layout.tsx";
 
-const date = new Date();
+const Counter = () => {
+  const id = "counter";
+  let state = 0;
+
+  const Element = (
+    <div id={id}>
+      <span>`${state}`</span>
+      <button>increment</button>
+    </div>
+  );
+
+  Element.script = () => {
+    const container = document.querySelector(`#${id}`);
+    const button = container.querySelector("button");
+    const span = container.querySelector("span");
+    button.addEventListener("click", () => {
+      span.innerHTML = `${++state}`;
+    });
+  };
+
+  return Element;
+};
 
 const Page = () => (
   <Layout>
     <h1 class="red">Hello world!</h1>
-    <p>Build date: ${date}</p>
+    <Counter />
+    <p>Build date: ${new Date()}</p>
   </Layout>
 );
 
@@ -27,11 +49,6 @@ Page.style = `
 		color: red;
 	}
 `;
-
-Page.script = () => {
-  console.log("This function runs in the browser.");
-  console.log("Current (browser) date:", date);
-};
 
 export default Page;
 ```

@@ -54,12 +54,28 @@ impl Runtime {
         self.mods.insert(url.clone(), mod_id);
         self.graph_loader.inject(url.clone(), code);
 
+        self.graph
+            .build(
+                self.mods.iter().map(|(k, _)| k.clone()).collect(),
+                &mut self.graph_loader,
+                Default::default(),
+            )
+            .await;
+
         Ok(mod_id)
     }
 
     pub async fn load_side_from_url(&mut self, url: &Url) -> Result<usize, anyhow::Error> {
         let mod_id = self.worker.js_runtime.load_side_module(url, None).await?;
         self.mods.insert(url.clone(), mod_id);
+
+        self.graph
+            .build(
+                self.mods.iter().map(|(k, _)| k.clone()).collect(),
+                &mut self.graph_loader,
+                Default::default(),
+            )
+            .await;
 
         Ok(mod_id)
     }

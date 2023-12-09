@@ -62,6 +62,30 @@ impl Page {
         let main = runtime.load_main_from_url(url).await?;
         runtime.eval().await?;
 
+        runtime
+            .load_side(
+                &Url::from_file_path(runtime.root().join("__index.js")).unwrap(),
+                format!(
+                    r#"
+            import Page from "{}"
+            import {{ runScript }} from "{}"
+            if (!("Deno" in window)) {{
+                if (Page.script) {{
+                    Page.script()
+                }}
+                runScript(Page())
+            }}
+            "#,
+                    url.to_string(),
+                    &Url::from_file_path(runtime.root().join("/areum/jsx-runtime"))
+                        .unwrap()
+                        .to_string()
+                ),
+            )
+            .await?;
+
+        // runtime.eval().await?;
+
         let mut arena = Arena::new();
         let dom = {
             let (default, mut scope) = runtime.export(main, "default").await?;
@@ -115,7 +139,7 @@ impl Page {
         let mut rewriter = HtmlRewriter::new(
             lol_html::Settings {
                 element_content_handlers: vec![
-                    element!("head", |el| {
+                    element!("body", |el| {
                         let tag = format!("<script>{}</script>", script);
                         el.append(&tag, ContentType::Html);
                         Ok(())
@@ -145,7 +169,8 @@ impl Page {
     }
 
     pub fn inline_bundle(&mut self) -> Result<String, anyhow::Error> {
-        self.runtime_mut().graph_mut().roots = vec![Url::from_file_path(&self.path).unwrap()];
+        self.runtime_mut().graph_mut().roots =
+            vec![Url::from_file_path(self.runtime().root().join("__index.js")).unwrap()];
         let bundle = deno_emit::bundle_graph(
             self.runtime().graph(),
             deno_emit::BundleOptions {
