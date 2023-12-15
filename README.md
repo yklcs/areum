@@ -25,11 +25,10 @@ const Counter = () => {
   );
 
   Element.script = () => {
-    const container = document.querySelector(`#${id}`);
-    const button = container.querySelector("button");
-    const span = container.querySelector("span");
+    const count = document.querySelector(`${id} > span`);
+    const button = document.querySelector(`${id} > button`);
     button.addEventListener("click", () => {
-      span.innerHTML = `${++state}`;
+      count.innerHTML = `${++state}`;
     });
   };
 
@@ -45,9 +44,9 @@ const Page = () => (
 );
 
 Page.style = `
-	.red {
-		color: red;
-	}
+  .red {
+    color: red;
+  }
 `;
 
 export default Page;
