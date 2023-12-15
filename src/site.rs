@@ -1,5 +1,4 @@
 use anyhow::anyhow;
-use deno_ast::EmitOptions;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use std::{
     env,
@@ -11,12 +10,12 @@ use std::{
 use url::Url;
 use walkdir::{DirEntry, WalkDir};
 
-use crate::{page::Page, runtime::RuntimeFactory};
+use crate::runtime::Runtime;
 
 pub struct Site {
     root: PathBuf,
     page_paths: Vec<PathBuf>,
-    runtime_factory: RuntimeFactory,
+    runtime: Runtime,
 }
 
 impl Site {
@@ -25,15 +24,15 @@ impl Site {
         Site {
             root: pwd.clone(),
             page_paths: Vec::new(),
-            runtime_factory: RuntimeFactory::new(&pwd),
+            runtime: Runtime::new(&pwd),
         }
     }
 
     pub fn new_with_root(root: &Path) -> Result<Self, anyhow::Error> {
         let root = fs::canonicalize(root)?;
         Ok(Site {
-            runtime_factory: RuntimeFactory::new(&root),
-            root: root,
+            runtime: Runtime::new(&root),
+            root,
             page_paths: Vec::new(),
         })
     }
@@ -77,23 +76,17 @@ impl Site {
         Ok(())
     }
 
-    pub async fn render_to_fs(&self, outdir: &Path) -> Result<(), anyhow::Error> {
+    pub async fn render_to_fs(&mut self, outdir: &Path) -> Result<(), anyhow::Error> {
         fs::create_dir_all(outdir)?;
         for path in self.page_paths.clone().into_iter() {
-            let runtime = self.runtime_factory.spawn(&path);
             let url = Url::from_file_path(&path).unwrap();
-            let mut page = Page::eval(runtime, &url).await?;
+            let mut page = self.runtime.eval_page(&url).await?;
             page.process()?;
+            page.inline_bundle(&mut self.runtime)?;
 
-            let fname = outdir
-                .join(path.strip_prefix(&self.root)?)
-                .with_extension("");
-
-            let fpath = if fname.file_name() == Some(OsStr::new("index")) {
-                fname.with_extension("html")
-            } else {
-                fname.join("index.html")
-            };
+            let fpath = page_dirname(&path)?; // /root/dir
+            let fpath = fpath.strip_prefix(&self.root)?; // /dir
+            let fpath = outdir.join(fpath).join("index.html"); // /out/dir/index.html
 
             fs::create_dir_all(fpath.parent().ok_or(anyhow!("no parent path found"))?)?;
 
@@ -103,5 +96,22 @@ impl Site {
             w.flush()?
         }
         Ok(())
+    }
+}
+
+/// Get the page's dirname
+///
+/// /index.html -> /
+/// /dir/index.html -> /dir
+/// /dir.html -> /dir
+pub fn page_dirname(path: &Path) -> Result<PathBuf, anyhow::Error> {
+    let fname = path.with_extension("");
+    if fname.file_name() == Some(OsStr::new("index")) {
+        Ok(fname
+            .parent()
+            .ok_or(anyhow!("could not find parent"))?
+            .to_path_buf())
+    } else {
+        Ok(fname)
     }
 }
