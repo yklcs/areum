@@ -26,18 +26,44 @@ pub struct Page {
     dom: ArenaId,
     style: String,
     script: String,
+    id: String,
 }
 
 impl Page {
     pub fn new(url: &Url, arena: Arena, dom: ArenaId) -> Self {
+        let id: String = rand::thread_rng()
+            .sample_iter(&Alphanumeric)
+            .take(8)
+            .map(char::from)
+            .collect();
+
+        let script = format!(
+            r#"
+        import {{ page{} as Page, runScript }} from "/index.js"
+        if (!("Deno" in window)) {{
+            if (Page.script) {{
+                Page.script()
+            }}
+            runScript(Page())
+        }}
+        "#,
+            id
+        );
+
         Self {
             url: url.clone(),
             arena,
             dom,
             style: String::new(),
-            script: String::new(),
+            script,
+            id,
         }
     }
+
+    pub fn id(&self) -> String {
+        self.id.clone()
+    }
+
     pub fn render_to_string(&mut self) -> Result<String, anyhow::Error> {
         let mut output = Vec::new();
         self.render(&mut output)?;
@@ -52,7 +78,7 @@ impl Page {
             lol_html::Settings {
                 element_content_handlers: vec![
                     element!("body", |el| {
-                        let tag = format!("<script>{}</script>", self.script);
+                        let tag = format!(r#"<script type="module">{}</script>"#, self.script);
                         el.append(&tag, ContentType::Html);
                         Ok(())
                     }),
@@ -80,25 +106,25 @@ impl Page {
         Ok(())
     }
 
-    pub fn inline_bundle(&mut self, runtime: &mut Runtime) -> Result<(), anyhow::Error> {
-        let script_path = page_dirname(&self.url.to_file_path().unwrap())?.join("__index.js");
-        runtime.graph_mut().roots = vec![Url::from_file_path(script_path).unwrap()];
-        let bundle = deno_emit::bundle_graph(
-            runtime.graph(),
-            deno_emit::BundleOptions {
-                bundle_type: deno_emit::BundleType::Module,
-                emit_options: EmitOptions {
-                    inline_source_map: false,
-                    ..Default::default()
-                },
-                emit_ignore_directives: false,
-                minify: true,
-            },
-        )?;
+    // pub fn inline_bundle(&mut self, runtime: &mut Runtime) -> Result<(), anyhow::Error> {
+    //     let script_path = page_dirname(&self.url.to_file_path().unwrap())?.join("__index.js");
+    //     runtime.graph_mut().roots = vec![Url::from_file_path(script_path).unwrap()];
+    //     let bundle = deno_emit::bundle_graph(
+    //         runtime.graph(),
+    //         deno_emit::BundleOptions {
+    //             bundle_type: deno_emit::BundleType::Module,
+    //             emit_options: EmitOptions {
+    //                 inline_source_map: false,
+    //                 ..Default::default()
+    //             },
+    //             emit_ignore_directives: false,
+    //             minify: true,
+    //         },
+    //     )?;
 
-        self.script = bundle.code;
-        Ok(())
-    }
+    //     self.script = bundle.code;
+    //     Ok(())
+    // }
 
     pub fn walk_children(
         &mut self,

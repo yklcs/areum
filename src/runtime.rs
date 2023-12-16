@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::anyhow;
+use deno_ast::EmitOptions;
 use deno_core::v8;
 use deno_graph::ModuleGraph;
 use deno_runtime::{
@@ -67,6 +68,24 @@ impl Runtime {
         &self.root
     }
 
+    pub async fn bundle(&mut self, url: &Url) -> Result<String, anyhow::Error> {
+        self.graph.roots = vec![url.clone()];
+        let bundle = deno_emit::bundle_graph(
+            &self.graph,
+            deno_emit::BundleOptions {
+                bundle_type: deno_emit::BundleType::Module,
+                emit_options: EmitOptions {
+                    inline_source_map: false,
+                    ..Default::default()
+                },
+                emit_ignore_directives: false,
+                minify: true,
+            },
+        )?;
+
+        Ok(bundle.code)
+    }
+
     pub async fn eval_page(&mut self, url: &Url) -> Result<Page, anyhow::Error> {
         let jsx = self
             .load_from_string(
@@ -80,31 +99,6 @@ impl Runtime {
         // Load and eval page
         let module = self.load_from_url(url, false).await?;
         self.eval(module).await?;
-
-        let script_path = page_dirname(&url.to_file_path().unwrap())?.join("__index.js");
-        let script = self
-            .load_from_string(
-                &Url::from_file_path(script_path).unwrap(),
-                format!(
-                    r#"
-        import Page from "{}"
-        import {{ runScript }} from "{}"
-        if (!("Deno" in window)) {{
-            if (Page.script) {{
-                Page.script()
-            }}
-            runScript(Page())
-        }}
-        "#,
-                    url.to_string(),
-                    &Url::from_file_path(self.root().join("/areum/jsx-runtime"))
-                        .unwrap()
-                        .to_string()
-                ),
-                false,
-            )
-            .await?;
-        self.eval(script).await?;
 
         let mut arena = Arena::new();
         let dom = {
@@ -137,6 +131,7 @@ impl Runtime {
         };
 
         let page = Page::new(url, arena, dom);
+
         Ok(page)
     }
 

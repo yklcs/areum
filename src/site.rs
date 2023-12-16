@@ -78,11 +78,15 @@ impl Site {
 
     pub async fn render_to_fs(&mut self, outdir: &Path) -> Result<(), anyhow::Error> {
         fs::create_dir_all(outdir)?;
+
+        let mut bundle = String::new();
+        let bundle_url = Url::from_file_path(self.root.join("__index.ts")).unwrap();
+
         for path in self.page_paths.clone().into_iter() {
             let url = Url::from_file_path(&path).unwrap();
             let mut page = self.runtime.eval_page(&url).await?;
             page.process()?;
-            page.inline_bundle(&mut self.runtime)?;
+            // page.inline_bundle(&mut self.runtime)?;
 
             let fpath = page_dirname(&path)?; // /root/dir
             let fpath = fpath.strip_prefix(&self.root)?; // /dir
@@ -93,8 +97,32 @@ impl Site {
             let f = fs::File::create(fpath)?;
             let mut w = io::BufWriter::new(f);
             page.render(&mut w)?;
-            w.flush()?
+            w.flush()?;
+
+            bundle.push_str(&format!(
+                r#"export {{ default as page{} }} from "{}"
+                "#,
+                page.id(),
+                url.to_string()
+            ))
         }
+
+        bundle.push_str(&format!(
+            r#"export {{ runScript }} from "{}""#,
+            &Url::from_file_path(self.root.join("/areum/jsx-runtime"))
+                .unwrap()
+                .to_string()
+        ));
+
+        let bundle_mod = self
+            .runtime
+            .load_from_string(&bundle_url, bundle, true)
+            .await?;
+        self.runtime.eval(bundle_mod).await?;
+
+        let bundled = self.runtime.bundle(&bundle_url).await?;
+        fs::write(outdir.join("index.js"), bundled)?;
+
         Ok(())
     }
 }
