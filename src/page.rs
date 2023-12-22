@@ -1,7 +1,8 @@
 use std::{convert::Infallible, io};
 
 use anyhow::anyhow;
-use deno_ast::EmitOptions;
+
+use deno_core::v8;
 use lightningcss::{
     selector::{Component, Selector},
     stylesheet::{ParserFlags, ParserOptions, PrinterOptions, StyleSheet},
@@ -11,14 +12,12 @@ use lol_html::{element, html_content::ContentType, HtmlRewriter};
 use rand::{distributions::Alphanumeric, Rng};
 use url::Url;
 
-use crate::{
-    dom::{
-        arena::{Arena, ArenaId},
-        Children, Element,
-    },
-    runtime::Runtime,
-    site::page_dirname,
+use crate::dom::{
+    arena::{Arena, ArenaElement, ArenaId},
+    boxed::BoxedElement,
+    Children, Element,
 };
+use dongjak::runtime::Runtime;
 
 pub struct Page {
     url: Url,
@@ -30,7 +29,50 @@ pub struct Page {
 }
 
 impl Page {
-    pub fn new(url: &Url, arena: Arena, dom: ArenaId) -> Self {
+    pub async fn new(runtime: &mut Runtime, url: &Url) -> Result<Self, anyhow::Error> {
+        let jsx = runtime
+            .load_from_string(
+                &Url::from_file_path(runtime.root().join("/areum/jsx-runtime")).unwrap(),
+                include_str!("ts/jsx-runtime.ts"),
+                false,
+            )
+            .await?;
+        runtime.eval(jsx).await?;
+
+        // Load and eval page
+        let module = runtime.load_from_url(url, false).await?;
+        runtime.eval(module).await?;
+
+        let mut arena = Arena::new();
+        let dom = {
+            let (default, mut scope) = runtime.export(module, "default").await?;
+            let func = v8::Local::<v8::Function>::try_from(default)?;
+            let obj = func
+                .call(&mut scope, default, &[])
+                .unwrap()
+                .to_object(&mut scope)
+                .unwrap();
+
+            let style_key = v8::String::new(&mut scope, "style").unwrap();
+            let style = func
+                .to_object(&mut scope)
+                .unwrap()
+                .get(&mut scope, style_key.into());
+
+            if let Some(style) = style {
+                let style = if style.is_function() {
+                    let style_func = v8::Local::<v8::Function>::try_from(style)?;
+                    style_func.call(&mut scope, style, &[]).unwrap()
+                } else {
+                    style
+                };
+                obj.set(&mut scope, style_key.into(), style);
+            }
+
+            let boxed_dom = serde_v8::from_v8::<BoxedElement>(&mut scope, obj.into())?;
+            ArenaElement::from_boxed(&mut arena, &boxed_dom, None)
+        };
+
         let id: String = rand::thread_rng()
             .sample_iter(&Alphanumeric)
             .take(8)
@@ -50,14 +92,16 @@ impl Page {
             id
         );
 
-        Self {
+        let page = Self {
             url: url.clone(),
             arena,
             dom,
             style: String::new(),
             script,
             id,
-        }
+        };
+
+        Ok(page)
     }
 
     pub fn id(&self) -> String {
@@ -105,26 +149,6 @@ impl Page {
         self.apply_styles(self.dom)?;
         Ok(())
     }
-
-    // pub fn inline_bundle(&mut self, runtime: &mut Runtime) -> Result<(), anyhow::Error> {
-    //     let script_path = page_dirname(&self.url.to_file_path().unwrap())?.join("__index.js");
-    //     runtime.graph_mut().roots = vec![Url::from_file_path(script_path).unwrap()];
-    //     let bundle = deno_emit::bundle_graph(
-    //         runtime.graph(),
-    //         deno_emit::BundleOptions {
-    //             bundle_type: deno_emit::BundleType::Module,
-    //             emit_options: EmitOptions {
-    //                 inline_source_map: false,
-    //                 ..Default::default()
-    //             },
-    //             emit_ignore_directives: false,
-    //             minify: true,
-    //         },
-    //     )?;
-
-    //     self.script = bundle.code;
-    //     Ok(())
-    // }
 
     pub fn walk_children(
         &mut self,

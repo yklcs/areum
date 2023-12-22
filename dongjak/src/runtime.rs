@@ -14,15 +14,7 @@ use deno_runtime::{
 };
 use url::Url;
 
-use crate::{
-    dom::{
-        arena::{Arena, ArenaElement},
-        boxed::BoxedElement,
-    },
-    loader::{transpile, Loader},
-    page::Page,
-    site::page_dirname,
-};
+use crate::loader::{transpile, Loader};
 
 pub struct Runtime {
     root: PathBuf,
@@ -86,54 +78,54 @@ impl Runtime {
         Ok(bundle.code)
     }
 
-    pub async fn eval_page(&mut self, url: &Url) -> Result<Page, anyhow::Error> {
-        let jsx = self
-            .load_from_string(
-                &Url::from_file_path(self.root().join("/areum/jsx-runtime")).unwrap(),
-                include_str!("ts/jsx-runtime.ts"),
-                false,
-            )
-            .await?;
-        self.eval(jsx).await?;
+    // pub async fn eval_page(&mut self, url: &Url) -> Result<Page, anyhow::Error> {
+    //     let jsx = self
+    //         .load_from_string(
+    //             &Url::from_file_path(self.root().join("/areum/jsx-runtime")).unwrap(),
+    //             include_str!("ts/jsx-runtime.ts"),
+    //             false,
+    //         )
+    //         .await?;
+    //     self.eval(jsx).await?;
 
-        // Load and eval page
-        let module = self.load_from_url(url, false).await?;
-        self.eval(module).await?;
+    //     // Load and eval page
+    //     let module = self.load_from_url(url, false).await?;
+    //     self.eval(module).await?;
 
-        let mut arena = Arena::new();
-        let dom = {
-            let (default, mut scope) = self.export(module, "default").await?;
-            let func = v8::Local::<v8::Function>::try_from(default)?;
-            let obj = func
-                .call(&mut scope, default, &[])
-                .unwrap()
-                .to_object(&mut scope)
-                .unwrap();
+    //     let mut arena = Arena::new();
+    //     let dom = {
+    //         let (default, mut scope) = self.export(module, "default").await?;
+    //         let func = v8::Local::<v8::Function>::try_from(default)?;
+    //         let obj = func
+    //             .call(&mut scope, default, &[])
+    //             .unwrap()
+    //             .to_object(&mut scope)
+    //             .unwrap();
 
-            let style_key = v8::String::new(&mut scope, "style").unwrap();
-            let style = func
-                .to_object(&mut scope)
-                .unwrap()
-                .get(&mut scope, style_key.into());
+    //         let style_key = v8::String::new(&mut scope, "style").unwrap();
+    //         let style = func
+    //             .to_object(&mut scope)
+    //             .unwrap()
+    //             .get(&mut scope, style_key.into());
 
-            if let Some(style) = style {
-                let style = if style.is_function() {
-                    let style_func = v8::Local::<v8::Function>::try_from(style)?;
-                    style_func.call(&mut scope, style, &[]).unwrap()
-                } else {
-                    style
-                };
-                obj.set(&mut scope, style_key.into(), style);
-            }
+    //         if let Some(style) = style {
+    //             let style = if style.is_function() {
+    //                 let style_func = v8::Local::<v8::Function>::try_from(style)?;
+    //                 style_func.call(&mut scope, style, &[]).unwrap()
+    //             } else {
+    //                 style
+    //             };
+    //             obj.set(&mut scope, style_key.into(), style);
+    //         }
 
-            let boxed_dom = serde_v8::from_v8::<BoxedElement>(&mut scope, obj.into())?;
-            ArenaElement::from_boxed(&mut arena, &boxed_dom, None)
-        };
+    //         let boxed_dom = serde_v8::from_v8::<BoxedElement>(&mut scope, obj.into())?;
+    //         ArenaElement::from_boxed(&mut arena, &boxed_dom, None)
+    //     };
 
-        let page = Page::new(url, arena, dom);
+    //     let page = Page::new(url, arena, dom);
 
-        Ok(page)
-    }
+    //     Ok(page)
+    // }
 
     pub async fn load_from_string(
         &mut self,

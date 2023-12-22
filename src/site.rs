@@ -1,4 +1,5 @@
 use anyhow::anyhow;
+use dongjak::runtime::Runtime;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use std::{
     env,
@@ -10,7 +11,7 @@ use std::{
 use url::Url;
 use walkdir::{DirEntry, WalkDir};
 
-use crate::runtime::Runtime;
+use crate::page::Page;
 
 pub struct Site {
     root: PathBuf,
@@ -84,7 +85,7 @@ impl Site {
 
         for path in self.page_paths.clone().into_iter() {
             let url = Url::from_file_path(&path).unwrap();
-            let mut page = self.runtime.eval_page(&url).await?;
+            let mut page = Page::new(&mut self.runtime, &url).await?;
             page.process()?;
             // page.inline_bundle(&mut self.runtime)?;
 
