@@ -2,6 +2,7 @@ use std::{
     collections::HashMap,
     path::{Path, PathBuf},
     rc::Rc,
+    sync::{Arc, Mutex},
 };
 
 use anyhow::anyhow;
@@ -15,27 +16,46 @@ use deno_runtime::{
 use serde::{de::DeserializeOwned, Serialize};
 use url::Url;
 
-use crate::loader::{transpile, Loader};
+use crate::loader::{transpile, Loader, LoaderOptions};
+
+pub struct RuntimeOptions {
+    pub jsx_import_source: String,
+}
 
 pub struct Runtime {
     root: PathBuf,
     worker: deno_runtime::worker::MainWorker,
     main_mod: Option<(Url, usize)>,
     mods: HashMap<Url, usize>,
-    graph: ModuleGraph,
+    graph: Arc<Mutex<ModuleGraph>>,
     graph_loader: Loader,
     pub functions: HashMap<String, Function>,
+    options: RuntimeOptions,
 }
 
 impl Runtime {
-    pub fn new(root: &Path) -> Self {
-        let loader = Loader::new();
+    pub async fn add_root(&mut self, root: &Url) {
+        self.graph
+            .lock()
+            .unwrap()
+            .build(
+                vec![root.clone()],
+                &mut self.graph_loader,
+                Default::default(),
+            )
+            .await;
+    }
+
+    pub fn new(root: &Path, options: RuntimeOptions) -> Self {
+        let loader = Loader::new(LoaderOptions {
+            jsx_import_source: options.jsx_import_source.clone(),
+        });
 
         let worker = MainWorker::bootstrap_from_options(
             Url::from_file_path(root.join("__index.ts")).unwrap(),
             PermissionsContainer::allow_all(),
             WorkerOptions {
-                module_loader: Rc::new(loader),
+                module_loader: Rc::new(loader.clone()),
                 ..Default::default()
             },
         );
@@ -45,9 +65,10 @@ impl Runtime {
             worker,
             main_mod: None,
             mods: HashMap::new(),
-            graph: ModuleGraph::new(deno_graph::GraphKind::All),
-            graph_loader: Loader::new(),
+            graph: Arc::new(Mutex::new(ModuleGraph::new(deno_graph::GraphKind::All))),
+            graph_loader: loader,
             functions: HashMap::new(),
+            options,
         }
     }
 
@@ -55,22 +76,15 @@ impl Runtime {
         self.worker.js_runtime.handle_scope()
     }
 
-    pub fn graph(&self) -> &ModuleGraph {
-        &self.graph
-    }
-
-    pub fn graph_mut(&mut self) -> &mut ModuleGraph {
-        &mut self.graph
-    }
-
     pub fn root(&self) -> &Path {
         &self.root
     }
 
     pub async fn bundle(&mut self, url: &Url) -> Result<String, anyhow::Error> {
-        self.graph.roots = vec![url.clone()];
+        let mut graph = self.graph.lock().unwrap().clone();
+        graph.roots = vec![url.clone()];
         let bundle = deno_emit::bundle_graph(
-            &self.graph,
+            &graph,
             deno_emit::BundleOptions {
                 bundle_type: deno_emit::BundleType::Module,
                 emit_options: EmitOptions {
@@ -91,7 +105,7 @@ impl Runtime {
         code: impl ToString,
         main: bool,
     ) -> Result<usize, anyhow::Error> {
-        let code = transpile(url, code.to_string())?;
+        let code = transpile(url, &code.to_string(), &self.options.jsx_import_source)?;
 
         let module = if main {
             self.worker
@@ -112,6 +126,8 @@ impl Runtime {
 
         self.graph_loader.inject(url.clone(), code);
         self.graph
+            .lock()
+            .unwrap()
             .build(
                 self.mods.iter().map(|(k, _)| k.clone()).collect(),
                 &mut self.graph_loader,
@@ -135,6 +151,8 @@ impl Runtime {
         }
 
         self.graph
+            .lock()
+            .unwrap()
             .build(
                 self.mods.iter().map(|(k, _)| k.clone()).collect(),
                 &mut self.graph_loader,

@@ -1,27 +1,46 @@
-use std::{collections::HashMap, pin::Pin};
+use std::{
+    collections::HashMap,
+    path::Path,
+    pin::Pin,
+    sync::{Arc, Mutex},
+};
 
 use anyhow::anyhow;
 use deno_ast::MediaType;
 use deno_core::{futures::FutureExt, ModuleType};
 use url::Url;
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
+pub struct LoaderOptions {
+    pub jsx_import_source: String,
+}
+
+#[derive(Clone)]
 pub struct Loader {
     client: reqwest::Client,
-    pub(crate) injected: HashMap<Url, String>,
+    pub(crate) injected: Arc<Mutex<HashMap<Url, String>>>,
+    options: LoaderOptions,
 }
 
 impl Loader {
-    pub fn new() -> Self {
-        Default::default()
+    pub fn new(options: LoaderOptions) -> Self {
+        Self {
+            client: reqwest::Client::new(),
+            injected: Arc::new(Mutex::new(HashMap::new())),
+            options,
+        }
     }
 
-    pub fn inject(&mut self, url: Url, code: String) {
-        self.injected.insert(url, code);
+    pub fn inject(&self, url: Url, code: String) {
+        self.injected.lock().unwrap().insert(url, code);
+    }
+
+    pub fn get_injected(&self, url: &Url) -> Option<String> {
+        self.injected.lock().unwrap().get(url).map(|s| s.clone())
     }
 
     async fn load_to_string(&self, specifier: &Url) -> Result<String, anyhow::Error> {
-        if let Some(code) = self.injected.get(specifier) {
+        if let Some(code) = self.get_injected(specifier) {
             return Ok(code.clone());
         }
 
@@ -43,7 +62,7 @@ impl Loader {
         };
 
         let code = if module_type == ModuleType::JavaScript {
-            transpile(&specifier, code)?
+            transpile(&specifier, &code, &self.options.jsx_import_source)?
         } else {
             code
         };
@@ -63,9 +82,10 @@ impl deno_graph::source::Loader for Loader {
         let loader = self.clone();
         async move {
             let code = loader.load_to_string(&specifier).await?;
+            loader.inject(specifier.clone(), code.clone());
             Ok(Some(deno_graph::source::LoadResponse::Module {
                 content: code.into(),
-                specifier: specifier,
+                specifier,
                 maybe_headers: None,
             }))
         }
@@ -94,6 +114,7 @@ impl deno_core::ModuleLoader for Loader {
         let loader = self.clone();
         async move {
             let code = loader.load_to_string(&specifier).await?;
+            loader.inject(specifier.clone(), code.clone());
             Ok(deno_core::ModuleSource::new(
                 module_type,
                 code.into(),
@@ -105,9 +126,31 @@ impl deno_core::ModuleLoader for Loader {
 }
 
 /// Transpiles code if required
-pub(crate) fn transpile(specifier: &Url, code: String) -> Result<String, anyhow::Error> {
+pub(crate) fn transpile(
+    specifier: &Url,
+    code: &str,
+    jsx_import_source: &str,
+) -> Result<String, anyhow::Error> {
+    let code = match Path::new(specifier.path())
+        .extension()
+        .map(|ext| ext.to_str().unwrap())
+    {
+        Some("mdx" | "md") => {
+            let code = mdxjs::compile(
+                &code,
+                &mdxjs::Options {
+                    jsx_import_source: Some(jsx_import_source.into()),
+                    ..Default::default()
+                },
+            )
+            .map_err(|err| anyhow!(err))?;
+            code.into()
+        }
+        _ => code.into(),
+    };
+
     let media_type = if MediaType::from_specifier(specifier) == MediaType::Unknown {
-        MediaType::TypeScript
+        MediaType::Tsx
     } else {
         MediaType::from_specifier(specifier)
     };
@@ -127,7 +170,7 @@ pub(crate) fn transpile(specifier: &Url, code: String) -> Result<String, anyhow:
             maybe_syntax: None,
         })?;
         let transpiled = parsed.transpile(&deno_ast::EmitOptions {
-            jsx_import_source: Some("/areum".to_string()),
+            jsx_import_source: Some(jsx_import_source.into()),
             jsx_automatic: true,
             ..Default::default()
         })?;

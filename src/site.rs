@@ -1,6 +1,6 @@
 use anyhow::anyhow;
 use deno_core::v8;
-use dongjak::runtime::Runtime;
+use dongjak::runtime::{Runtime, RuntimeOptions};
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use std::{
     ffi::OsStr,
@@ -25,7 +25,12 @@ impl Site {
     pub async fn new(root: &Path) -> Result<Self, anyhow::Error> {
         let root = fs::canonicalize(root)?;
         let mut site = Site {
-            runtime: Runtime::new(&root),
+            runtime: Runtime::new(
+                &root,
+                RuntimeOptions {
+                    jsx_import_source: "/areum".into(),
+                },
+            ),
             root,
             page_paths: Vec::new(),
         };
@@ -83,8 +88,8 @@ impl Site {
             }
             if let Some(ext) = entry.path().extension() {
                 match ext.to_str().unwrap() {
-                    "tsx" => true,
-                    "jsx" => true,
+                    "tsx" | "jsx" => true,
+                    "mdx" | "md" => true,
                     _ => false,
                 }
             } else {
@@ -114,7 +119,6 @@ impl Site {
             let url = Url::from_file_path(&path).unwrap();
             let mut page = Page::new(&mut self.runtime, &url).await?;
             page.process()?;
-            // page.inline_bundle(&mut self.runtime)?;
 
             let fpath = page_dirname(&path)?; // /root/dir
             let fpath = fpath.strip_prefix(&self.root)?; // /dir

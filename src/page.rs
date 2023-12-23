@@ -32,6 +32,8 @@ pub struct Page {
 
 impl Page {
     pub async fn new(runtime: &mut Runtime, url: &Url) -> Result<Self, anyhow::Error> {
+        runtime.add_root(url).await;
+
         let mut arena = Arena::new();
         let boxed: BoxedElement = runtime
             .call_by_name(Site::LOADER_FN_KEY, &[url.to_string()])
@@ -115,7 +117,7 @@ impl Page {
         Ok(())
     }
 
-    pub fn walk_children(
+    fn walk_children(
         &mut self,
         children: &Children<ArenaId>,
         f: &mut impl FnMut(&mut Self, ArenaId) -> Result<bool, anyhow::Error>,
@@ -140,7 +142,7 @@ impl Page {
         Ok(())
     }
 
-    pub fn apply_styles(&mut self, id: ArenaId) -> Result<(), anyhow::Error> {
+    fn apply_styles(&mut self, id: ArenaId) -> Result<(), anyhow::Error> {
         let element = self.arena[id].clone();
 
         struct CssVisitor {
