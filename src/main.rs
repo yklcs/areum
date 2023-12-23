@@ -16,7 +16,7 @@ async fn main() -> Result<(), anyhow::Error> {
     let args = Args::parse();
 
     let root = args.input.unwrap_or(std::env::current_dir()?);
-    let mut site = Site::new_with_root(&root)?;
+    let mut site = Site::new(&root).await?;
     site.read_root()?;
     site.render_to_fs(&args.out).await?;
 

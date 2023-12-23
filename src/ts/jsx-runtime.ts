@@ -47,7 +47,6 @@ const jsx = (element: JSX.ElementType, props: Props): Node => {
     };
   }
 
-  console.log(node);
   return node;
 };
 

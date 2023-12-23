@@ -6,12 +6,13 @@ use std::{
 
 use anyhow::anyhow;
 use deno_ast::EmitOptions;
-use deno_core::v8;
+use deno_core::{v8, PollEventLoopOptions};
 use deno_graph::ModuleGraph;
 use deno_runtime::{
     permissions::PermissionsContainer,
     worker::{MainWorker, WorkerOptions},
 };
+use serde::{de::DeserializeOwned, Serialize};
 use url::Url;
 
 use crate::loader::{transpile, Loader};
@@ -23,6 +24,7 @@ pub struct Runtime {
     mods: HashMap<Url, usize>,
     graph: ModuleGraph,
     graph_loader: Loader,
+    pub functions: HashMap<String, Function>,
 }
 
 impl Runtime {
@@ -45,7 +47,12 @@ impl Runtime {
             mods: HashMap::new(),
             graph: ModuleGraph::new(deno_graph::GraphKind::All),
             graph_loader: Loader::new(),
+            functions: HashMap::new(),
         }
+    }
+
+    pub fn scope(&mut self) -> v8::HandleScope {
+        self.worker.js_runtime.handle_scope()
     }
 
     pub fn graph(&self) -> &ModuleGraph {
@@ -77,55 +84,6 @@ impl Runtime {
 
         Ok(bundle.code)
     }
-
-    // pub async fn eval_page(&mut self, url: &Url) -> Result<Page, anyhow::Error> {
-    //     let jsx = self
-    //         .load_from_string(
-    //             &Url::from_file_path(self.root().join("/areum/jsx-runtime")).unwrap(),
-    //             include_str!("ts/jsx-runtime.ts"),
-    //             false,
-    //         )
-    //         .await?;
-    //     self.eval(jsx).await?;
-
-    //     // Load and eval page
-    //     let module = self.load_from_url(url, false).await?;
-    //     self.eval(module).await?;
-
-    //     let mut arena = Arena::new();
-    //     let dom = {
-    //         let (default, mut scope) = self.export(module, "default").await?;
-    //         let func = v8::Local::<v8::Function>::try_from(default)?;
-    //         let obj = func
-    //             .call(&mut scope, default, &[])
-    //             .unwrap()
-    //             .to_object(&mut scope)
-    //             .unwrap();
-
-    //         let style_key = v8::String::new(&mut scope, "style").unwrap();
-    //         let style = func
-    //             .to_object(&mut scope)
-    //             .unwrap()
-    //             .get(&mut scope, style_key.into());
-
-    //         if let Some(style) = style {
-    //             let style = if style.is_function() {
-    //                 let style_func = v8::Local::<v8::Function>::try_from(style)?;
-    //                 style_func.call(&mut scope, style, &[]).unwrap()
-    //             } else {
-    //                 style
-    //             };
-    //             obj.set(&mut scope, style_key.into(), style);
-    //         }
-
-    //         let boxed_dom = serde_v8::from_v8::<BoxedElement>(&mut scope, obj.into())?;
-    //         ArenaElement::from_boxed(&mut arena, &boxed_dom, None)
-    //     };
-
-    //     let page = Page::new(url, arena, dom);
-
-    //     Ok(page)
-    // }
 
     pub async fn load_from_string(
         &mut self,
@@ -200,11 +158,14 @@ impl Runtime {
     /// Gets an export from the runtime by module ID.
     ///
     /// Comparable to doing `import { key } from module`.
-    pub async fn export(
+    pub async fn export<T>(
         &mut self,
         module: usize,
         key: &str,
-    ) -> Result<(v8::Local<v8::Value>, v8::HandleScope), anyhow::Error> {
+    ) -> Result<v8::Global<T>, anyhow::Error>
+    where
+        for<'a> v8::Local<'a, T>: TryFrom<v8::Local<'a, v8::Value>, Error = v8::DataError>,
+    {
         let global = self.worker.js_runtime.get_module_namespace(module)?;
         let mut scope = self.worker.js_runtime.handle_scope();
         let local = v8::Local::new(&mut scope, global);
@@ -212,24 +173,61 @@ impl Runtime {
         let key_v8 = v8::String::new(&mut scope, key)
             .ok_or(anyhow!("could not convert key into v8 value"))?;
 
-        let got = local
+        let got: v8::Local<T> = local
             .get(&mut scope, key_v8.into())
-            .ok_or(anyhow!("could not find {}", key))?;
+            .ok_or(anyhow!("could not find {}", key))?
+            .try_into()?;
 
-        Ok((got, scope))
+        let global = v8::Global::new(&mut scope, got);
+        Ok(global)
     }
 
-    /// Gets an export from the runtime by module url.
-    ///
-    /// Comparable to doing `import { key } from module`.
-    pub async fn export_by_url(
-        &mut self,
-        url: &Url,
-        key: &str,
-    ) -> Result<(v8::Local<v8::Value>, v8::HandleScope), anyhow::Error> {
-        let module = self
-            .module_from_url(url)
-            .ok_or(anyhow!("could not find module {}", url.to_string()))?;
-        self.export(module, key).await
+    pub async fn call<A, R>(&mut self, func: &Function, args: &[A]) -> Result<R, anyhow::Error>
+    where
+        A: Serialize,
+        R: DeserializeOwned,
+    {
+        let args_v8: Vec<_> = {
+            let scope: &mut v8::HandleScope<'_> = &mut self.worker.js_runtime.handle_scope();
+            args.into_iter()
+                .map(|arg| {
+                    let local = serde_v8::to_v8(scope, arg).unwrap();
+                    v8::Global::new(scope, local)
+                })
+                .collect()
+        };
+
+        let promise = self.worker.js_runtime.call_with_args(&func.0, &args_v8);
+        let result_global = self
+            .worker
+            .js_runtime
+            .with_event_loop_promise(promise, PollEventLoopOptions::default())
+            .await?;
+        let scope = &mut self.worker.js_runtime.handle_scope();
+        let result_local = v8::Local::new(scope, result_global);
+        let result: R = serde_v8::from_v8(scope, result_local)?;
+        Ok(result)
+    }
+
+    pub async fn call_by_name<A, R>(&mut self, func: &str, args: &[A]) -> Result<R, anyhow::Error>
+    where
+        A: Serialize,
+        R: DeserializeOwned,
+    {
+        let func = self
+            .functions
+            .get(func)
+            .ok_or(anyhow!("could not find function {}", func))?
+            .clone();
+        self.call(&func, args).await
+    }
+}
+
+#[derive(Clone)]
+pub struct Function(pub v8::Global<v8::Function>);
+
+impl From<v8::Global<v8::Function>> for Function {
+    fn from(value: v8::Global<v8::Function>) -> Self {
+        Self(value)
     }
 }

@@ -1,8 +1,8 @@
 use anyhow::anyhow;
+use deno_core::v8;
 use dongjak::runtime::Runtime;
 use globset::{Glob, GlobSet, GlobSetBuilder};
 use std::{
-    env,
     ffi::OsStr,
     fs,
     io::{self, Write},
@@ -20,22 +20,49 @@ pub struct Site {
 }
 
 impl Site {
-    pub fn new() -> Self {
-        let pwd = env::current_dir().unwrap();
-        Site {
-            root: pwd.clone(),
-            page_paths: Vec::new(),
-            runtime: Runtime::new(&pwd),
-        }
-    }
+    pub const LOADER_FN_KEY: &'static str = "loader";
 
-    pub fn new_with_root(root: &Path) -> Result<Self, anyhow::Error> {
+    pub async fn new(root: &Path) -> Result<Self, anyhow::Error> {
         let root = fs::canonicalize(root)?;
-        Ok(Site {
+        let mut site = Site {
             runtime: Runtime::new(&root),
             root,
             page_paths: Vec::new(),
-        })
+        };
+        site.bootstrap().await?;
+        Ok(site)
+    }
+
+    async fn bootstrap(&mut self) -> Result<(), anyhow::Error> {
+        let jsx_mod = self
+            .runtime
+            .load_from_string(
+                &Url::from_file_path(self.runtime.root().join("/areum/jsx-runtime")).unwrap(),
+                include_str!("ts/jsx-runtime.ts"),
+                false,
+            )
+            .await?;
+        self.runtime.eval(jsx_mod).await?;
+
+        let loader_mod = self
+            .runtime
+            .load_from_string(
+                &Url::from_file_path(self.runtime.root().join("__loader.ts")).unwrap(),
+                include_str!("ts/loader.ts"),
+                false,
+            )
+            .await?;
+        self.runtime.eval(loader_mod).await?;
+
+        let loader = self
+            .runtime
+            .export::<v8::Function>(loader_mod, "default")
+            .await?;
+        self.runtime
+            .functions
+            .insert(Self::LOADER_FN_KEY.into(), loader.into());
+
+        Ok(())
     }
 
     pub fn read_root(&mut self) -> anyhow::Result<()> {
