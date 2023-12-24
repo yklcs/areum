@@ -182,9 +182,6 @@ impl Page {
 
                 *selector = v.try_into()?;
 
-                println!("{:?}", selector);
-
-                // selector.append();
                 Ok(())
             }
         }
