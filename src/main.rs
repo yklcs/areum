@@ -1,7 +1,11 @@
 use std::path::PathBuf;
 
-use areum::{server::Server, site::Site};
+use areum::{
+    server::{Command, Server},
+    site::Site,
+};
 use clap::{Parser, Subcommand};
+use notify::{event::ModifyKind, Event, EventKind, RecursiveMode, Watcher};
 
 #[derive(Parser)]
 struct Cli {
@@ -36,6 +40,22 @@ async fn main() -> Result<(), anyhow::Error> {
         Commands::Serve { address, input } => {
             let root = input.unwrap_or(std::env::current_dir()?);
             let server = Server::new(&root)?;
+            let tx = server.tx_cmd.clone();
+
+            let mut watcher =
+                notify::recommended_watcher(move |res: Result<Event, notify::Error>| match res {
+                    Ok(event) => match event.kind {
+                        EventKind::Create(_)
+                        | EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Name(_))
+                        | EventKind::Remove(_) => {
+                            tx.blocking_send(Command::Restart);
+                        }
+                        _ => {}
+                    },
+                    Err(e) => println!("watch error: {:?}", e),
+                })?;
+            watcher.watch(&root, RecursiveMode::Recursive)?;
+
             server.serve(&address).await?;
         }
     }
