@@ -9,6 +9,7 @@ use lightningcss::{
 };
 use lol_html::{element, html_content::ContentType, HtmlRewriter};
 use rand::{distributions::Alphanumeric, Rng};
+use sha2::{Digest, Sha256};
 use url::Url;
 
 use crate::{
@@ -26,7 +27,7 @@ pub struct Page {
     arena: Arena,
     dom: ArenaId,
     style: String,
-    script: String,
+    pub(crate) script: String,
     id: String,
 }
 
@@ -40,11 +41,7 @@ impl Page {
             .await?;
         let dom = ArenaElement::from_boxed(&mut arena, &boxed, None);
 
-        let id: String = rand::thread_rng()
-            .sample_iter(&Alphanumeric)
-            .take(8)
-            .map(char::from)
-            .collect();
+        let id = format!("{:x}", Sha256::digest(url.to_string()));
 
         let script = format!(
             r#"
@@ -82,6 +79,8 @@ impl Page {
     }
 
     pub fn render(&mut self, writer: &mut impl io::Write) -> Result<(), anyhow::Error> {
+        self.process()?;
+
         let mut html = self.arena[self.dom].to_string(&self.arena);
         html.insert_str(0, "<!DOCTYPE html>");
 
@@ -112,7 +111,7 @@ impl Page {
         Ok(())
     }
 
-    pub fn process(&mut self) -> Result<(), anyhow::Error> {
+    fn process(&mut self) -> Result<(), anyhow::Error> {
         self.apply_styles(self.dom)?;
         Ok(())
     }

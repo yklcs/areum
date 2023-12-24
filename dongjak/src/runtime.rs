@@ -28,7 +28,7 @@ pub struct Runtime {
     main_mod: Option<(Url, usize)>,
     mods: HashMap<Url, usize>,
     graph: Arc<Mutex<ModuleGraph>>,
-    graph_loader: Loader,
+    pub graph_loader: Loader,
     pub functions: HashMap<String, Function>,
     options: RuntimeOptions,
 }

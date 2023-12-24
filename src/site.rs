@@ -118,7 +118,6 @@ impl Site {
         for path in self.page_paths.clone().into_iter() {
             let url = Url::from_file_path(&path).unwrap();
             let mut page = Page::new(&mut self.runtime, &url).await?;
-            page.process()?;
 
             let fpath = page_dirname(&path)?; // /root/dir
             let fpath = fpath.strip_prefix(&self.root)?; // /dir
