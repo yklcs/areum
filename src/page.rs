@@ -147,6 +147,11 @@ impl Page {
         struct CssVisitor {
             unique: String,
         }
+
+        fn process_selectors(from: Selector) -> Selector {
+            todo!()
+        }
+
         impl<'i> lightningcss::visitor::Visitor<'i> for CssVisitor {
             type Error = Infallible;
 
@@ -155,7 +160,31 @@ impl Page {
             }
 
             fn visit_selector(&mut self, selector: &mut Selector<'i>) -> Result<(), Self::Error> {
-                selector.append(Component::Class(self.unique.clone().into()));
+                let v: Vec<_> = selector
+                    .iter_raw_parse_order_from(0)
+                    .map(|x| x.clone())
+                    .flat_map(|mut c| match c {
+                        Component::ID(_) | Component::Class(_) | Component::LocalName(_) => {
+                            vec![c, Component::Class(self.unique.clone().into())]
+                        }
+                        Component::Is(ref mut inner)
+                        | Component::Has(ref mut inner)
+                        | Component::Negation(ref mut inner)
+                        | Component::Where(ref mut inner) => {
+                            for i in inner.iter_mut() {
+                                self.visit_selector(i);
+                            }
+                            vec![c]
+                        }
+                        _ => vec![c],
+                    })
+                    .collect();
+
+                *selector = v.try_into()?;
+
+                println!("{:?}", selector);
+
+                // selector.append();
                 Ok(())
             }
         }
@@ -198,12 +227,15 @@ impl Page {
             // Apply unique class to children, except other vtags
             if let Some(children) = element.children() {
                 self.walk_children(children, &mut |self_, id| {
-                    if self_.arena[id].vtag() == None {
+                    let propagate = self_.arena[id].vtag() == None
+                        || self_.arena[id].props().get("cascade")
+                            == Some(&serde_json::Value::Bool(true));
+                    if propagate {
                         let _ = self_.arena[id]
                             .props_mut()
                             .append_string_space_separated("class".into(), unique.clone());
                     }
-                    Ok(self_.arena[id].vtag() == None)
+                    Ok(propagate)
                 })?;
             }
         }

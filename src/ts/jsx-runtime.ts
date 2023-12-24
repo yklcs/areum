@@ -1,15 +1,10 @@
-interface Props {
-  children?: Node | Node[];
-  [key: string]: any;
-}
-
 interface Node {
   vtag?: string;
   tag?: string;
   style?: string;
   script?: () => void;
   children?: Node | Node[];
-  props: Props;
+  props: JSX.Props;
 }
 
 const runScript = (node: Node) => {
@@ -25,7 +20,7 @@ const runScript = (node: Node) => {
   }
 };
 
-const jsx = (element: JSX.ElementType, props: Props): Node => {
+const jsx = (element: JSX.ElementType, props: JSX.Props): Node => {
   let node;
 
   if (typeof element === "function") {
@@ -38,6 +33,7 @@ const jsx = (element: JSX.ElementType, props: Props): Node => {
       script: element.script,
       ...element(props),
     };
+    node.props.cascade = props.cascade;
   } else {
     const { children, ...rest } = props;
     node = {
@@ -59,6 +55,12 @@ const Fragment = ({ children }: { children?: Node | Node[] }) => ({
 });
 
 export namespace JSX {
+  export interface Props {
+    children?: Node | Node[];
+    cascade?: boolean;
+    [key: string]: any;
+  }
+
   export interface IntrinsicElements {
     [el: string]: unknown;
   }
