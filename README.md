@@ -2,11 +2,11 @@
 
 _Currently experimental_
 
-Areum is a static site generator.
-The core idea is to embed the Deno runtime into a static site generator, allowing any JSX/TSX file to be used to author pages programatically.
+Areum is a single executable static site generator focusing on JSX and MDX execution.
 
 - Single Rust binary with embedded Deno runtime
-- JSX/TSX based pages
+- JSX/TSX/MDX/MD based pages
+- Server mode with live reloading
 - Property based styling and scripting
 - CSS/JS/asset processing pipeline
 
@@ -50,4 +50,14 @@ Page.style = `
 `;
 
 export default Page;
+```
+
+## Usage
+
+```shell
+# Build site
+$ areum build src/
+
+# Start server
+$ areum serve src/
 ```
