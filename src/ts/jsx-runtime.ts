@@ -1,3 +1,5 @@
+import * as _ from "./areum.ts";
+
 interface Node {
   vtag?: string;
   tag?: string;

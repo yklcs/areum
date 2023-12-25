@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::anyhow;
 use deno_ast::EmitOptions;
-use deno_core::{v8, PollEventLoopOptions};
+use deno_core::{v8, Extension, PollEventLoopOptions};
 use deno_graph::ModuleGraph;
 use deno_runtime::{
     permissions::PermissionsContainer,
@@ -20,6 +20,7 @@ use crate::loader::{transpile, Loader, LoaderOptions};
 
 pub struct RuntimeOptions {
     pub jsx_import_source: String,
+    pub extensions: Vec<Extension>,
 }
 
 pub struct Runtime {
@@ -30,7 +31,7 @@ pub struct Runtime {
     graph: Arc<Mutex<ModuleGraph>>,
     pub graph_loader: Loader,
     pub functions: HashMap<String, Function>,
-    options: RuntimeOptions,
+    jsx_import_source: String,
 }
 
 impl Runtime {
@@ -56,6 +57,7 @@ impl Runtime {
             PermissionsContainer::allow_all(),
             WorkerOptions {
                 module_loader: Rc::new(loader.clone()),
+                extensions: options.extensions,
                 ..Default::default()
             },
         );
@@ -68,7 +70,7 @@ impl Runtime {
             graph: Arc::new(Mutex::new(ModuleGraph::new(deno_graph::GraphKind::All))),
             graph_loader: loader,
             functions: HashMap::new(),
-            options,
+            jsx_import_source: options.jsx_import_source,
         }
     }
 
@@ -105,7 +107,7 @@ impl Runtime {
         code: impl ToString,
         main: bool,
     ) -> Result<usize, anyhow::Error> {
-        let code = transpile(url, &code.to_string(), &self.options.jsx_import_source)?;
+        let code = transpile(url, &code.to_string(), &self.jsx_import_source)?;
 
         let module = if main {
             self.worker

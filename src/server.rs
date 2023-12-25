@@ -1,7 +1,8 @@
 use std::{
+    fs,
     path::{Path, PathBuf},
     sync::Arc,
-    thread::{self, JoinHandle}, fs,
+    thread::{self, JoinHandle},
 };
 
 use anyhow::Context;
@@ -11,7 +12,7 @@ use axum::{
     response::{Html, IntoResponse, Response},
     routing, Router,
 };
-use deno_core::{futures::FutureExt, v8};
+use deno_core::{futures::FutureExt, op2, v8, OpState};
 use dongjak::runtime::{Runtime, RuntimeOptions};
 
 use tokio::sync::{mpsc, oneshot, Mutex};
@@ -34,6 +35,25 @@ struct Message {
     responder: oneshot::Sender<Result<Page, anyhow::Error>>,
 }
 
+#[op2]
+#[string]
+fn op_root(state: &OpState) -> String {
+    let root = state.borrow::<PathBuf>();
+    root.to_str().unwrap().to_string()
+}
+
+deno_core::extension!(
+    root_extension,
+    ops = [op_root],
+    options = {
+        root: PathBuf,
+    },
+    state = |state, options| {
+        state.put::<PathBuf>(options.root);
+    },
+    docs = "A small sample extension",
+);
+
 fn spawn_runtime(
     root: &PathBuf,
 ) -> (
@@ -52,6 +72,7 @@ fn spawn_runtime(
             &root,
             RuntimeOptions {
                 jsx_import_source: "/areum".into(),
+                extensions: vec![root_extension::init_ops_and_esm(root.clone())],
             },
         );
 
@@ -64,6 +85,15 @@ fn spawn_runtime(
                 )
                 .await?;
             runtime.eval(jsx_mod).await?;
+            
+            let areum_mod = runtime
+                .load_from_string(
+                    &Url::from_file_path(runtime.root().join("/areum")).unwrap(),
+                    include_str!("ts/areum.ts"),
+                    false,
+                )
+                .await?;
+            runtime.eval(areum_mod).await?;
 
             let loader_mod = runtime
                 .load_from_string(

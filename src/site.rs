@@ -11,7 +11,7 @@ use std::{
 use url::Url;
 use walkdir::{DirEntry, WalkDir};
 
-use crate::page::Page;
+use crate::{page::Page, server::root_extension};
 
 pub struct Site {
     root: PathBuf,
@@ -29,6 +29,7 @@ impl Site {
                 &root,
                 RuntimeOptions {
                     jsx_import_source: "/areum".into(),
+                    extensions: vec![root_extension::init_ops_and_esm(root.clone())],
                 },
             ),
             root,
