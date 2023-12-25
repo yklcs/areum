@@ -1,7 +1,7 @@
 use std::{
     path::{Path, PathBuf},
     sync::Arc,
-    thread::{self, JoinHandle},
+    thread::{self, JoinHandle}, fs,
 };
 
 use anyhow::Context;
@@ -180,8 +180,12 @@ async fn get_page(
     request: Request,
     root: PathBuf,
     tx: Arc<Mutex<mpsc::Sender<Message>>>,
-) -> Result<Html<String>, ServerError> {
+) -> Result<impl IntoResponse, ServerError> {
     let path = root.join(".".to_string() + request.uri().path());
+
+    if path.is_file() {
+        return Ok(fs::read(path)?.into_response());
+    }
 
     let paths_maybe = &[
         path.join("index.tsx"),
@@ -213,7 +217,7 @@ async fn get_page(
     let page = rx_page.await?;
     let html = page?.render_to_string()?;
 
-    Ok(Html(html))
+    Ok(Html(html).into_response())
 }
 
 struct ServerError(anyhow::Error);

@@ -3,7 +3,9 @@ use std::{convert::Infallible, io};
 use anyhow::anyhow;
 
 use lightningcss::{
-    selector::{Component, Selector},
+    css_modules,
+    properties::Property,
+    selector::{Component, PseudoClass, Selector},
     stylesheet::{ParserFlags, ParserOptions, PrinterOptions, StyleSheet},
     visitor::Visit,
 };
@@ -148,10 +150,6 @@ impl Page {
             unique: String,
         }
 
-        fn process_selectors(from: Selector) -> Selector {
-            todo!()
-        }
-
         impl<'i> lightningcss::visitor::Visitor<'i> for CssVisitor {
             type Error = Infallible;
 
@@ -176,7 +174,21 @@ impl Page {
                             }
                             vec![c]
                         }
-                        _ => vec![c],
+                        Component::NonTSPseudoClass(pseudo) => match pseudo {
+                            PseudoClass::Global { selector } => {
+                                let inner = *selector;
+                                inner
+                                    .iter_raw_parse_order_from(0)
+                                    .map(|x| x.clone())
+                                    .collect()
+                            }
+                            _ => {
+                                vec![Component::NonTSPseudoClass(pseudo)]
+                            }
+                        },
+                        _ => {
+                            vec![c]
+                        }
                     })
                     .collect();
 
@@ -198,6 +210,12 @@ impl Page {
                 &style,
                 ParserOptions {
                     flags: ParserFlags::NESTING,
+                    css_modules: Some(css_modules::Config {
+                        pattern: css_modules::Pattern {
+                            segments: vec![css_modules::Segment::Local].into(),
+                        },
+                        dashed_idents: false,
+                    }),
                     ..Default::default()
                 },
             )
