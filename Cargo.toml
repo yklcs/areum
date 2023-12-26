@@ -25,6 +25,7 @@ axum = "0.7.2"
 lazy_static = "1.4.0"
 sha2 = "0.10.8"
 notify = "6.1.1"
+ignore = "0.4.21"
 
 [workspace.dependencies]
 anyhow = { version = "1.0.75", features = ["backtrace"] }
