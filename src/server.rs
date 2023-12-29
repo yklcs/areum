@@ -18,10 +18,11 @@ use dongjak::runtime::{Runtime, RuntimeOptions};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use url::Url;
 
-use crate::{page::Page, site::Site};
+use crate::{fs::Fsys, page::Page, site::Site};
 
 pub struct Server {
     router: Router,
+    vfs: Fsys,
     pub tx_cmd: mpsc::Sender<Command>,
 }
 
@@ -85,7 +86,7 @@ fn spawn_runtime(
                 )
                 .await?;
             runtime.eval(jsx_mod).await?;
-            
+
             let areum_mod = runtime
                 .load_from_string(
                     &Url::from_file_path(runtime.root().join("/areum")).unwrap(),
@@ -161,6 +162,9 @@ fn spawn_runtime(
 impl Server {
     pub fn new(root: &Path) -> Result<Self, anyhow::Error> {
         let root = root.to_path_buf().canonicalize()?;
+        let mut vfs = Fsys::new(&root)?;
+        vfs.scan()?;
+
         let (mut handle, tx_job, mut tx_stop) = spawn_runtime(&root);
 
         let tx_job = Arc::new(Mutex::new(tx_job));
@@ -196,7 +200,11 @@ impl Server {
             rt.block_on(future);
         });
 
-        Ok(Server { router, tx_cmd })
+        Ok(Server {
+            router,
+            tx_cmd,
+            vfs,
+        })
     }
 
     pub async fn serve(self, address: &str) -> Result<(), anyhow::Error> {

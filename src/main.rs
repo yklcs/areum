@@ -34,8 +34,7 @@ async fn main() -> Result<(), anyhow::Error> {
         Commands::Build { out, input } => {
             let root = input.unwrap_or(std::env::current_dir()?);
             let mut site = Site::new(&root).await?;
-            site.read_root()?;
-            site.render_to_fs(&out).await?;
+            site.build(&out).await?;
         }
         Commands::Serve { address, input } => {
             let root = input.unwrap_or(std::env::current_dir()?);

@@ -1,7 +1,6 @@
 use anyhow::anyhow;
 use deno_core::v8;
 use dongjak::runtime::{Runtime, RuntimeOptions};
-use globset::{Glob, GlobSet, GlobSetBuilder};
 use std::{
     ffi::OsStr,
     fs,
@@ -9,14 +8,17 @@ use std::{
     path::{Path, PathBuf},
 };
 use url::Url;
-use walkdir::{DirEntry, WalkDir};
 
-use crate::{page::Page, server::root_extension};
+use crate::{
+    fs::{FileKind, Fsys},
+    page::Page,
+    server::root_extension,
+};
 
 pub struct Site {
     root: PathBuf,
-    page_paths: Vec<PathBuf>,
     runtime: Runtime,
+    vfs: Fsys,
 }
 
 impl Site {
@@ -32,8 +34,8 @@ impl Site {
                     extensions: vec![root_extension::init_ops_and_esm(root.clone())],
                 },
             ),
+            vfs: Fsys::new(&root)?,
             root,
-            page_paths: Vec::new(),
         };
         site.bootstrap().await?;
         Ok(site)
@@ -49,6 +51,16 @@ impl Site {
             )
             .await?;
         self.runtime.eval(jsx_mod).await?;
+
+        let areum_mod = self
+            .runtime
+            .load_from_string(
+                &Url::from_file_path(self.runtime.root().join("/areum")).unwrap(),
+                include_str!("ts/areum.ts"),
+                false,
+            )
+            .await?;
+        self.runtime.eval(areum_mod).await?;
 
         let loader_mod = self
             .runtime
@@ -71,56 +83,23 @@ impl Site {
         Ok(())
     }
 
-    pub fn read_root(&mut self) -> anyhow::Result<()> {
-        let mut builder = GlobSetBuilder::new();
-        builder.add(Glob::new(".git/")?);
-        builder.add(Glob::new("target/")?);
-        let ignore_set = builder.build()?;
-
-        fn is_site(entry: &DirEntry, ignore_set: &GlobSet) -> bool {
-            if !ignore_set.matches(entry.path()).is_empty() {
-                return false;
-            }
-            if entry.file_type().is_dir() {
-                return true;
-            }
-            if entry.file_name().to_str().unwrap().starts_with("_") {
-                return false;
-            }
-            if let Some(ext) = entry.path().extension() {
-                match ext.to_str().unwrap() {
-                    "tsx" | "jsx" => true,
-                    "mdx" | "md" => true,
-                    _ => false,
-                }
-            } else {
-                false
-            }
-        }
-
-        for entry in WalkDir::new(&self.root)
-            .into_iter()
-            .filter_entry(|e| is_site(e, &ignore_set))
-        {
-            let entry = entry?;
-            if !entry.file_type().is_dir() {
-                self.page_paths.push(entry.into_path());
-            }
-        }
-        Ok(())
-    }
-
-    pub async fn render_to_fs(&mut self, outdir: &Path) -> Result<(), anyhow::Error> {
+    pub async fn build(&mut self, outdir: &Path) -> Result<(), anyhow::Error> {
+        self.vfs.scan()?;
         fs::create_dir_all(outdir)?;
 
         let mut bundle = String::new();
         let bundle_url = Url::from_file_path(self.root.join("__index.ts")).unwrap();
 
-        for path in self.page_paths.clone().into_iter() {
-            let url = Url::from_file_path(&path).unwrap();
+        for src in self
+            .vfs
+            .entries
+            .iter()
+            .filter(|f| (f.kind == FileKind::Jsx || f.kind == FileKind::Mdx) && !f.underscore)
+        {
+            let url = Url::from_file_path(&src.path).unwrap();
             let mut page = Page::new(&mut self.runtime, &url).await?;
 
-            let fpath = page_dirname(&path)?; // /root/dir
+            let fpath = page_dirname(&src.path)?; // /root/dir
             let fpath = fpath.strip_prefix(&self.root)?; // /dir
             let fpath = outdir.join(fpath).join("index.html"); // /out/dir/index.html
 
