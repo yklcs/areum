@@ -1,5 +1,5 @@
 mod dom;
-mod fs;
+mod vfs;
 pub mod page;
 pub mod server;
 pub mod site;

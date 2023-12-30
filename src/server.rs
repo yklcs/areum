@@ -18,11 +18,11 @@ use dongjak::runtime::{Runtime, RuntimeOptions};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use url::Url;
 
-use crate::{fs::Fsys, page::Page, site::Site};
+use crate::{vfs::VFSys, page::Page, site::Site};
 
 pub struct Server {
     router: Router,
-    vfs: Fsys,
+    vfs: VFSys,
     pub tx_cmd: mpsc::Sender<Command>,
 }
 
@@ -162,7 +162,7 @@ fn spawn_runtime(
 impl Server {
     pub fn new(root: &Path) -> Result<Self, anyhow::Error> {
         let root = root.to_path_buf().canonicalize()?;
-        let mut vfs = Fsys::new(&root)?;
+        let mut vfs = VFSys::new(&root)?;
         vfs.scan()?;
 
         let (mut handle, tx_job, mut tx_stop) = spawn_runtime(&root);

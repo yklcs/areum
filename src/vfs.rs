@@ -1,17 +1,13 @@
-use std::{
-    borrow::Borrow,
-    fs,
-    path::{Path, PathBuf},
-};
+use std::path::{Path, PathBuf};
 
-pub struct Fsys {
+pub struct VFSys {
     root: PathBuf,
-    pub entries: Vec<File>,
+    pub entries: Vec<VFile>,
 }
 
-impl Fsys {
+impl VFSys {
     pub fn new(root: impl AsRef<Path>) -> Result<Self, anyhow::Error> {
-        let mut fs = Fsys {
+        let mut fs = VFSys {
             root: root.as_ref().to_path_buf(),
             entries: Vec::new(),
         };
@@ -24,7 +20,7 @@ impl Fsys {
             .add_custom_ignore_filename(".areumignore")
             .build()
             .filter(|x| x.clone().unwrap().file_type().unwrap().is_file())
-            .map(|dir| Ok(File::from(dir?)))
+            .map(|dir| Ok(VFile::from(dir?)))
             .collect::<Result<Vec<_>, anyhow::Error>>()?;
 
         self.entries = entries;
@@ -33,17 +29,17 @@ impl Fsys {
 }
 
 #[derive(Debug)]
-pub struct File {
+pub struct VFile {
     pub path: PathBuf,
-    pub kind: FileKind,
+    pub kind: VFileKind,
     pub underscore: bool,
 }
 
-impl From<ignore::DirEntry> for File {
+impl From<ignore::DirEntry> for VFile {
     fn from(dir: ignore::DirEntry) -> Self {
         Self {
             path: dir.path().into(),
-            kind: FileKind::from(dir.path()),
+            kind: VFileKind::from(dir.path()),
             underscore: dir
                 .path()
                 .file_name()
@@ -55,7 +51,7 @@ impl From<ignore::DirEntry> for File {
 }
 
 #[derive(PartialEq, Eq, Debug)]
-pub enum FileKind {
+pub enum VFileKind {
     Jsx,
     Mdx,
     Js,
@@ -63,7 +59,7 @@ pub enum FileKind {
     Other,
 }
 
-impl<P> From<P> for FileKind
+impl<P> From<P> for VFileKind
 where
     P: AsRef<Path>,
 {

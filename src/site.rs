@@ -10,7 +10,7 @@ use std::{
 use url::Url;
 
 use crate::{
-    fs::{FileKind, Fsys},
+    vfs::{VFileKind, VFSys},
     page::Page,
     server::root_extension,
 };
@@ -18,7 +18,7 @@ use crate::{
 pub struct Site {
     root: PathBuf,
     runtime: Runtime,
-    vfs: Fsys,
+    vfs: VFSys,
 }
 
 impl Site {
@@ -34,7 +34,7 @@ impl Site {
                     extensions: vec![root_extension::init_ops_and_esm(root.clone())],
                 },
             ),
-            vfs: Fsys::new(&root)?,
+            vfs: VFSys::new(&root)?,
             root,
         };
         site.bootstrap().await?;
@@ -94,7 +94,7 @@ impl Site {
             .vfs
             .entries
             .iter()
-            .filter(|f| (f.kind == FileKind::Jsx || f.kind == FileKind::Mdx) && !f.underscore)
+            .filter(|f| (f.kind == VFileKind::Jsx || f.kind == VFileKind::Mdx) && !f.underscore)
         {
             let url = Url::from_file_path(&src.path).unwrap();
             let mut page = Page::new(&mut self.runtime, &url).await?;
