@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 use areum::{
     server::{Command, Server},
-    site::Site,
+    builder::Builder,
 };
 use clap::{Parser, Subcommand};
 use notify::{event::ModifyKind, Event, EventKind, RecursiveMode, Watcher};
@@ -33,7 +33,7 @@ async fn main() -> Result<(), anyhow::Error> {
     match cli.command {
         Commands::Build { out, input } => {
             let root = input.unwrap_or(std::env::current_dir()?);
-            let mut site = Site::new(&root).await?;
+            let mut site = Builder::new(&root).await?;
             site.build(&out).await?;
         }
         Commands::Serve { address, input } => {

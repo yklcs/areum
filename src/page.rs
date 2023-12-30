@@ -20,7 +20,7 @@ use crate::{
         boxed::BoxedElement,
         Children, Element,
     },
-    site::Site,
+    builder::Builder,
 };
 use dongjak::runtime::Runtime;
 
@@ -39,7 +39,7 @@ impl Page {
 
         let mut arena = Arena::new();
         let boxed: BoxedElement = runtime
-            .call_by_name(Site::LOADER_FN_KEY, &[url.to_string()])
+            .call_by_name(Builder::LOADER_FN_KEY, &[url.to_string()])
             .await?;
         let dom = ArenaElement::from_boxed(&mut arena, &boxed, None);
 

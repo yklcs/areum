@@ -18,7 +18,7 @@ use dongjak::runtime::{Runtime, RuntimeOptions};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use url::Url;
 
-use crate::{vfs::VFSys, page::Page, site::Site};
+use crate::{vfs::VFSys, page::Page, builder::Builder};
 
 pub struct Server {
     router: Router,
@@ -111,7 +111,7 @@ fn spawn_runtime(
 
             runtime
                 .functions
-                .insert(Site::LOADER_FN_KEY.into(), loader.into());
+                .insert(Builder::LOADER_FN_KEY.into(), loader.into());
 
             while let Some(Message { responder, request }) = rx_job.recv().await {
                 let mut page = Page::new(&mut runtime, &request).await?;

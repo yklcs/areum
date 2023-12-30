@@ -9,24 +9,20 @@ use std::{
 };
 use url::Url;
 
-use crate::{
-    page::Page,
-    server::root_extension,
-    vfs::{VFSys, VFileKind},
-};
+use crate::{page::Page, server::root_extension, vfs::VFSys};
 
-pub struct Site {
+pub struct Builder {
     root: PathBuf,
     runtime: Runtime,
     vfs: VFSys,
 }
 
-impl Site {
+impl Builder {
     pub const LOADER_FN_KEY: &'static str = "loader";
 
     pub async fn new(root: &Path) -> Result<Self, anyhow::Error> {
         let root = fs::canonicalize(root)?;
-        let mut site = Site {
+        let mut site = Builder {
             runtime: Runtime::new(
                 &root,
                 RuntimeOptions {
