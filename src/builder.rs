@@ -1,6 +1,4 @@
 use anyhow::anyhow;
-use deno_core::v8;
-use dongjak::runtime::{Runtime, RuntimeOptions};
 use std::{
     ffi::OsStr,
     fs,
@@ -9,86 +7,34 @@ use std::{
 };
 use url::Url;
 
-use crate::{page::Page, server::root_extension, vfs::VFSys};
+use crate::{env::Env, page::Page, vfs::VFSys};
 
 pub struct Builder {
     root: PathBuf,
-    runtime: Runtime,
+    env: Env,
     vfs: VFSys,
 }
 
 impl Builder {
-    pub const LOADER_FN_KEY: &'static str = "loader";
-
     pub async fn new(root: &Path) -> Result<Self, anyhow::Error> {
         let root = fs::canonicalize(root)?;
-        let mut site = Builder {
-            runtime: Runtime::new(
-                &root,
-                RuntimeOptions {
-                    jsx_import_source: "/areum".into(),
-                    extensions: vec![root_extension::init_ops_and_esm(root.clone())],
-                },
-            ),
+        let mut env = Env::new(&root)?;
+        env.bootstrap().await?;
+
+        Ok(Builder {
+            env,
             vfs: VFSys::new(&root)?,
             root,
-        };
-        site.bootstrap().await?;
-        Ok(site)
-    }
-
-    async fn bootstrap(&mut self) -> Result<(), anyhow::Error> {
-        let jsx_mod = self
-            .runtime
-            .load_from_string(
-                &Url::from_file_path(self.runtime.root().join("/areum/jsx-runtime")).unwrap(),
-                include_str!("ts/jsx-runtime.ts"),
-                false,
-            )
-            .await?;
-        self.runtime.eval(jsx_mod).await?;
-
-        let areum_mod = self
-            .runtime
-            .load_from_string(
-                &Url::from_file_path(self.runtime.root().join("/areum")).unwrap(),
-                include_str!("ts/areum.ts"),
-                false,
-            )
-            .await?;
-        self.runtime.eval(areum_mod).await?;
-
-        let loader_mod = self
-            .runtime
-            .load_from_string(
-                &Url::from_file_path(self.runtime.root().join("__loader.ts")).unwrap(),
-                include_str!("ts/loader.ts"),
-                false,
-            )
-            .await?;
-        self.runtime.eval(loader_mod).await?;
-
-        let loader = self
-            .runtime
-            .export::<v8::Function>(loader_mod, "default")
-            .await?;
-        self.runtime
-            .functions
-            .insert(Self::LOADER_FN_KEY.into(), loader.into());
-
-        Ok(())
+        })
     }
 
     pub async fn build(&mut self, outdir: &Path) -> Result<(), anyhow::Error> {
         self.vfs.scan()?;
         fs::create_dir_all(outdir)?;
 
-        let mut bundle = String::new();
-        let bundle_url = Url::from_file_path(self.root.join("__index.ts")).unwrap();
-
         for src in self.vfs.iter_pages() {
             let url = Url::from_file_path(&src.path).unwrap();
-            let mut page = Page::new(&mut self.runtime, &url).await?;
+            let mut page = Page::new(&mut self.env, &url).await?;
 
             let fpath = page_dirname(&src.path)?; // /root/dir
             let fpath = fpath.strip_prefix(&self.root)?; // /dir
@@ -101,28 +47,22 @@ impl Builder {
             page.render(&mut w)?;
             w.flush()?;
 
-            bundle.push_str(&format!(
+            self.env.bundler.push(format!(
                 r#"export {{ default as page{} }} from "{}"
                 "#,
                 page.id(),
                 url.to_string()
-            ))
+            ));
         }
 
-        bundle.push_str(&format!(
+        self.env.bundler.push(format!(
             r#"export {{ runScript }} from "{}""#,
             &Url::from_file_path(self.root.join("/areum/jsx-runtime"))
                 .unwrap()
                 .to_string()
         ));
 
-        let bundle_mod = self
-            .runtime
-            .load_from_string(&bundle_url, bundle, true)
-            .await?;
-        self.runtime.eval(bundle_mod).await?;
-
-        let bundled = self.runtime.bundle(&bundle_url).await?;
+        let bundled = self.env.bundle().await?;
         fs::write(outdir.join("index.js"), bundled)?;
 
         Ok(())

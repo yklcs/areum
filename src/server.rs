@@ -12,13 +12,12 @@ use axum::{
     response::{Html, IntoResponse, Response},
     routing, Router,
 };
-use deno_core::{futures::FutureExt, op2, v8, OpState};
-use dongjak::runtime::{Runtime, RuntimeOptions};
+use deno_core::futures::FutureExt;
 
 use tokio::sync::{mpsc, oneshot, Mutex};
 use url::Url;
 
-use crate::{vfs::VFSys, page::Page, builder::Builder};
+use crate::{env::Env, page::Page, vfs::VFSys};
 
 pub struct Server {
     router: Router,
@@ -36,25 +35,6 @@ struct Message {
     responder: oneshot::Sender<Result<Page, anyhow::Error>>,
 }
 
-#[op2]
-#[string]
-fn op_root(state: &OpState) -> String {
-    let root = state.borrow::<PathBuf>();
-    root.to_str().unwrap().to_string()
-}
-
-deno_core::extension!(
-    root_extension,
-    ops = [op_root],
-    options = {
-        root: PathBuf,
-    },
-    state = |state, options| {
-        state.put::<PathBuf>(options.root);
-    },
-    docs = "A small sample extension",
-);
-
 fn spawn_runtime(
     root: &PathBuf,
 ) -> (
@@ -69,63 +49,23 @@ fn spawn_runtime(
     let handle = thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().unwrap();
 
-        let mut runtime = Runtime::new(
-            &root,
-            RuntimeOptions {
-                jsx_import_source: "/areum".into(),
-                extensions: vec![root_extension::init_ops_and_esm(root.clone())],
-            },
-        );
+        let mut env = Env::new(&root).unwrap();
 
         let future = async {
-            let jsx_mod = runtime
-                .load_from_string(
-                    &Url::from_file_path(runtime.root().join("/areum/jsx-runtime")).unwrap(),
-                    include_str!("ts/jsx-runtime.ts"),
-                    false,
-                )
-                .await?;
-            runtime.eval(jsx_mod).await?;
-
-            let areum_mod = runtime
-                .load_from_string(
-                    &Url::from_file_path(runtime.root().join("/areum")).unwrap(),
-                    include_str!("ts/areum.ts"),
-                    false,
-                )
-                .await?;
-            runtime.eval(areum_mod).await?;
-
-            let loader_mod = runtime
-                .load_from_string(
-                    &Url::from_file_path(runtime.root().join("__loader.ts")).unwrap(),
-                    include_str!("ts/loader.ts"),
-                    false,
-                )
-                .await?;
-            runtime.eval(loader_mod).await?;
-
-            let loader = runtime
-                .export::<v8::Function>(loader_mod, "default")
-                .await?;
-
-            runtime
-                .functions
-                .insert(Builder::LOADER_FN_KEY.into(), loader.into());
-
+            env.bootstrap().await?;
             while let Some(Message { responder, request }) = rx_job.recv().await {
-                let mut page = Page::new(&mut runtime, &request).await?;
+                let mut page = Page::new(&mut env, &request).await?;
 
-                let bundle_url = Url::from_file_path(root.join("__index.ts")).unwrap();
-                let mut bundle = String::new();
-                bundle.push_str(&format!(
+                env.bundler.clear();
+
+                env.bundler.push(format!(
                     r#"import {{ runScript }} from "{}"
                     "#,
                     &Url::from_file_path(root.join("/areum/jsx-runtime"))
                         .unwrap()
                         .to_string()
                 ));
-                bundle.push_str(&format!(
+                env.bundler.push(format!(
                     r#"
                     import {{ default as Page }} from "{}"
                     if (!("Deno" in window)) {{
@@ -138,9 +78,7 @@ fn spawn_runtime(
                     request.to_string()
                 ));
 
-                runtime.graph_loader.inject(bundle_url.clone(), bundle);
-                runtime.add_root(&bundle_url).await;
-                page.script = runtime.bundle(&bundle_url).await?;
+                page.script = env.bundle().await?;
 
                 let _ = responder.send(Ok(page));
             }

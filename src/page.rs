@@ -4,7 +4,6 @@ use anyhow::anyhow;
 
 use lightningcss::{
     css_modules,
-    properties::Property,
     selector::{Component, PseudoClass, Selector},
     stylesheet::{ParserFlags, ParserOptions, PrinterOptions, StyleSheet},
     visitor::Visit,
@@ -20,9 +19,8 @@ use crate::{
         boxed::BoxedElement,
         Children, Element,
     },
-    builder::Builder,
+    env::Env,
 };
-use dongjak::runtime::Runtime;
 
 pub struct Page {
     url: Url,
@@ -34,12 +32,13 @@ pub struct Page {
 }
 
 impl Page {
-    pub async fn new(runtime: &mut Runtime, url: &Url) -> Result<Self, anyhow::Error> {
-        runtime.add_root(url).await;
+    pub async fn new(env: &mut Env, url: &Url) -> Result<Self, anyhow::Error> {
+        env.runtime.add_root(url).await;
 
         let mut arena = Arena::new();
-        let boxed: BoxedElement = runtime
-            .call_by_name(Builder::LOADER_FN_KEY, &[url.to_string()])
+        let boxed: BoxedElement = env
+            .runtime
+            .call_by_name(Env::LOADER_FN_KEY, &[url.to_string()])
             .await?;
         let dom = ArenaElement::from_boxed(&mut arena, &boxed, None);
 
