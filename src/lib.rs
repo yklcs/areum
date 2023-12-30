@@ -1,6 +1,6 @@
 pub mod builder;
 mod dom;
-pub mod page;
 mod env;
+pub mod page;
 pub mod server;
 mod vfs;

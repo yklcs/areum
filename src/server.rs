@@ -12,9 +12,8 @@ use axum::{
     response::{Html, IntoResponse, Response},
     routing, Router,
 };
-use deno_core::futures::FutureExt;
 
-use tokio::sync::{mpsc, oneshot, Mutex};
+use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 use url::Url;
 
 use crate::{env::Env, page::Page, vfs::VFSys};
@@ -22,9 +21,10 @@ use crate::{env::Env, page::Page, vfs::VFSys};
 pub struct Server {
     router: Router,
     vfs: VFSys,
-    pub tx_cmd: mpsc::Sender<Command>,
+    rx_cmd: broadcast::Receiver<Command>,
 }
 
+#[derive(Clone, Copy)]
 pub enum Command {
     Stop,
     Restart,
@@ -35,75 +35,69 @@ struct Message {
     responder: oneshot::Sender<Result<Page, anyhow::Error>>,
 }
 
-fn spawn_runtime(
-    root: &PathBuf,
-) -> (
-    JoinHandle<()>,
-    mpsc::Sender<Message>,
-    oneshot::Sender<Command>,
-) {
+fn spawn_env(root: &PathBuf) -> (JoinHandle<()>, mpsc::Sender<Message>, mpsc::Sender<bool>) {
     let (tx_job, mut rx_job) = mpsc::channel(16);
-    let (tx_stop, rx_stop) = oneshot::channel::<Command>();
+    let (tx_stop, mut rx_stop) = mpsc::channel::<bool>(1);
     let root = root.clone();
 
-    let handle = thread::spawn(move || {
+    let join_handle = thread::spawn(move || {
         let rt = tokio::runtime::Runtime::new().unwrap();
-
-        let mut env = Env::new(&root).unwrap();
+        let mut env: Env = Env::new(&root).unwrap();
 
         let future = async {
             env.bootstrap().await?;
-            while let Some(Message { responder, request }) = rx_job.recv().await {
-                let mut page = Page::new(&mut env, &request).await?;
 
-                env.bundler.clear();
+            loop {
+                tokio::select! {
+                    Some(Message { responder, request}) = rx_job.recv() => {
+                        let mut page = Page::new(&mut env, &request).await?;
 
-                env.bundler.push(format!(
-                    r#"import {{ runScript }} from "{}"
-                    "#,
-                    &Url::from_file_path(root.join("/areum/jsx-runtime"))
-                        .unwrap()
-                        .to_string()
-                ));
-                env.bundler.push(format!(
-                    r#"
-                    import {{ default as Page }} from "{}"
-                    if (!("Deno" in window)) {{
-                        if (Page.script) {{
-                            Page.script()
-                        }}
-                        runScript(Page())
-                    }}
-                    "#,
-                    request.to_string()
-                ));
+                        env.bundler.clear();
+                        env.bundler.push(format!(
+                            r#"import {{ runScript }} from "{}"
+                            "#,
+                            &Url::from_file_path(root.join("/areum/jsx-runtime"))
+                                .unwrap()
+                                .to_string()
+                        ));
+                        env.bundler.push(format!(
+                            r#"
+                            import {{ default as Page }} from "{}"
+                            if (!("Deno" in window)) {{
+                                if (Page.script) {{
+                                    Page.script()
+                                }}
+                                runScript(Page())
+                            }}
+                            "#,
+                            request.to_string()
+                        ));
 
-                page.script = env.bundle().await?;
-
-                let _ = responder.send(Ok(page));
+                        page.script = env.bundle().await?;
+                        responder.send(Ok(page)).unwrap_or_else(|_| panic!("error sending to channel"));
+                    },
+                    _ = rx_stop.recv() => {
+                        break;
+                    }
+                }
             }
 
             Ok::<(), anyhow::Error>(())
         };
-        rt.block_on(future).unwrap();
 
-        let handle = rt.handle().clone();
-        handle.block_on(async move {
-            rx_stop.await;
-            rt.shutdown_background();
-        });
+        rt.block_on(future).unwrap();
     });
 
-    (handle, tx_job, tx_stop)
+    (join_handle, tx_job, tx_stop)
 }
 
 impl Server {
-    pub fn new(root: &Path) -> Result<Self, anyhow::Error> {
+    pub fn new(root: &Path) -> Result<(Self, broadcast::Sender<Command>), anyhow::Error> {
         let root = root.to_path_buf().canonicalize()?;
         let mut vfs = VFSys::new(&root)?;
         vfs.scan()?;
 
-        let (mut handle, tx_job, mut tx_stop) = spawn_runtime(&root);
+        let (mut handle, tx_job, mut tx_stop) = spawn_env(&root);
 
         let tx_job = Arc::new(Mutex::new(tx_job));
         let new_handler = |root: PathBuf, tx_job: Arc<Mutex<mpsc::Sender<Message>>>| {
@@ -117,37 +111,58 @@ impl Server {
             routing::get(new_handler(root.clone(), tx_job.clone())),
         );
 
-        let (tx_cmd, mut rx_cmd) = mpsc::channel::<Command>(1);
+        let (tx_cmd, rx_cmd) = broadcast::channel(1);
 
-        thread::spawn(move || {
-            let rt = tokio::runtime::Runtime::new().unwrap();
-            let future = async {
-                while let Some(cmd) = rx_cmd.recv().await {
-                    match cmd {
-                        Command::Stop | Command::Restart => {
-                            tx_stop.send(Command::Stop);
-                            let (handle_, tx_job_, tx_stop_) = spawn_runtime(&root);
-                            *tx_job.lock().await = tx_job_;
-                            handle = handle_;
-                            tx_stop = tx_stop_;
-                        }
+        let mut rx_cmd_ = tx_cmd.subscribe();
+        tokio::spawn(async move {
+            loop {
+                match rx_cmd_.recv().await.unwrap() {
+                    Command::Restart => {
+                        tx_stop.send(true).await.unwrap();
+                        let (handle_, tx_job_, tx_stop_) = spawn_env(&root);
+
+                        *tx_job.lock().await = tx_job_;
+                        drop(tx_stop);
+                        handle.join().unwrap();
+
+                        handle = handle_;
+                        tx_stop = tx_stop_;
+                    }
+                    Command::Stop => {
+                        tx_stop.send(true).await.unwrap();
+
+                        drop(tx_job);
+                        drop(tx_stop);
+                        handle.join().unwrap();
+
+                        break;
                     }
                 }
             }
-            .boxed_local();
-            rt.block_on(future);
         });
 
-        Ok(Server {
+        let server = Server {
             router,
-            tx_cmd,
+            rx_cmd,
             vfs,
-        })
+        };
+        Ok((server, tx_cmd))
     }
 
     pub async fn serve(self, address: &str) -> Result<(), anyhow::Error> {
         let listener = tokio::net::TcpListener::bind(address).await?;
-        axum::serve(listener, self.router).await?;
+        axum::serve(listener, self.router)
+            .with_graceful_shutdown(async move {
+                loop {
+                    match self.rx_cmd.resubscribe().recv().await.unwrap() {
+                        Command::Stop => {
+                            break;
+                        }
+                        _ => {}
+                    }
+                }
+            })
+            .await?;
         Ok(())
     }
 }
@@ -181,14 +196,14 @@ async fn get_page(
     let url = Url::from_file_path(path).unwrap();
 
     let (tx_page, rx_page) = oneshot::channel();
-    let _ = tx
-        .lock()
+    tx.lock()
         .await
         .send(Message {
             request: url,
             responder: tx_page,
         })
-        .await;
+        .await
+        .unwrap();
 
     let page = rx_page.await?;
     let html = page?.render_to_string()?;

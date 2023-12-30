@@ -1,11 +1,13 @@
 use std::path::PathBuf;
 
+use anyhow::anyhow;
 use areum::{
-    server::{Command, Server},
     builder::Builder,
+    server::{Command, Server},
 };
 use clap::{Parser, Subcommand};
 use notify::{event::ModifyKind, Event, EventKind, RecursiveMode, Watcher};
+use tokio::signal;
 
 #[derive(Parser)]
 struct Cli {
@@ -38,22 +40,33 @@ async fn main() -> Result<(), anyhow::Error> {
         }
         Commands::Serve { address, input } => {
             let root = input.unwrap_or(std::env::current_dir()?);
-            let server = Server::new(&root)?;
-            let tx = server.tx_cmd.clone();
+            let (server, tx) = Server::new(&root)?;
 
+            let tx_ = tx.clone();
             let mut watcher =
                 notify::recommended_watcher(move |res: Result<Event, notify::Error>| match res {
                     Ok(event) => match event.kind {
                         EventKind::Create(_)
                         | EventKind::Modify(ModifyKind::Data(_) | ModifyKind::Name(_))
                         | EventKind::Remove(_) => {
-                            tx.blocking_send(Command::Restart);
+                            tx_.send(Command::Restart).or(Err("")).unwrap();
                         }
                         _ => {}
                     },
                     Err(e) => println!("watch error: {:?}", e),
                 })?;
             watcher.watch(&root, RecursiveMode::Recursive)?;
+
+            tokio::spawn(async move {
+                signal::ctrl_c()
+                    .await
+                    .map_err(|err| anyhow!(err))
+                    .and_then(|_| {
+                        tx.send(Command::Stop)
+                            .unwrap_or_else(|_| panic!("error sending to channel"));
+                        Ok(())
+                    })
+            });
 
             server.serve(&address).await?;
         }
