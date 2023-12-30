@@ -10,9 +10,9 @@ use std::{
 use url::Url;
 
 use crate::{
-    vfs::{VFileKind, VFSys},
     page::Page,
     server::root_extension,
+    vfs::{VFSys, VFileKind},
 };
 
 pub struct Site {
@@ -90,12 +90,7 @@ impl Site {
         let mut bundle = String::new();
         let bundle_url = Url::from_file_path(self.root.join("__index.ts")).unwrap();
 
-        for src in self
-            .vfs
-            .entries
-            .iter()
-            .filter(|f| (f.kind == VFileKind::Jsx || f.kind == VFileKind::Mdx) && !f.underscore)
-        {
+        for src in self.vfs.iter_pages() {
             let url = Url::from_file_path(&src.path).unwrap();
             let mut page = Page::new(&mut self.runtime, &url).await?;
 

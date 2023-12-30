@@ -26,6 +26,17 @@ impl VFSys {
         self.entries = entries;
         Ok(self)
     }
+
+    pub fn iter(&self) -> impl Iterator<Item = &VFile> + '_ {
+        self.entries.iter()
+    }
+
+    pub fn iter_pages(&self) -> impl Iterator<Item = &VFile> + '_ {
+        self.iter().filter(|f| match f.kind {
+            VFileKind::Jsx | VFileKind::Mdx if !f.underscore => true,
+            _ => false,
+        })
+    }
 }
 
 #[derive(Debug)]
