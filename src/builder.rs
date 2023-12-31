@@ -1,18 +1,16 @@
-use anyhow::anyhow;
 use std::{
-    ffi::OsStr,
     fs,
     io::{self, Write},
     path::{Path, PathBuf},
 };
 use url::Url;
 
-use crate::{env::Env, page::Page, vfs::VFSys};
+use crate::{env::Env, page::Page, src_fs::SrcFs};
 
 pub struct Builder {
     root: PathBuf,
     env: Env,
-    vfs: VFSys,
+    src_fs: SrcFs,
 }
 
 impl Builder {
@@ -23,26 +21,20 @@ impl Builder {
 
         Ok(Builder {
             env,
-            vfs: VFSys::new(&root)?,
+            src_fs: SrcFs::new(&root)?,
             root,
         })
     }
 
     pub async fn build(&mut self, outdir: &Path) -> Result<(), anyhow::Error> {
-        self.vfs.scan()?;
+        self.src_fs.scan()?;
         fs::create_dir_all(outdir)?;
 
-        for src in self.vfs.iter_pages() {
+        for src in self.src_fs.lock().iter_pages() {
             let url = Url::from_file_path(&src.path).unwrap();
             let mut page = Page::new(&mut self.env, &url).await?;
 
-            let fpath = page_dirname(&src.path)?; // /root/dir
-            let fpath = fpath.strip_prefix(&self.root)?; // /dir
-            let fpath = outdir.join(fpath).join("index.html"); // /out/dir/index.html
-
-            fs::create_dir_all(fpath.parent().ok_or(anyhow!("no parent path found"))?)?;
-
-            let f = fs::File::create(fpath)?;
+            let f = self.src_fs.out_file(&src, outdir)?;
             let mut w = io::BufWriter::new(f);
             page.render(&mut w)?;
             w.flush()?;
@@ -53,6 +45,10 @@ impl Builder {
                 page.id(),
                 url.to_string()
             ));
+        }
+
+        for asset in self.src_fs.lock().iter_assets() {
+            self.src_fs.copy(asset, outdir)?;
         }
 
         self.env.bundler.push(format!(
@@ -66,22 +62,5 @@ impl Builder {
         fs::write(outdir.join("index.js"), bundled)?;
 
         Ok(())
-    }
-}
-
-/// Get the page's dirname
-///
-/// /index.html -> /
-/// /dir/index.html -> /dir
-/// /dir.html -> /dir
-pub fn page_dirname(path: &Path) -> Result<PathBuf, anyhow::Error> {
-    let fname = path.with_extension("");
-    if fname.file_name() == Some(OsStr::new("index")) {
-        Ok(fname
-            .parent()
-            .ok_or(anyhow!("could not find parent"))?
-            .to_path_buf())
-    } else {
-        Ok(fname)
     }
 }

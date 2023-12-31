@@ -5,7 +5,7 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use anyhow::Context;
+use anyhow::{anyhow, Context};
 use axum::{
     extract::Request,
     http::StatusCode,
@@ -16,11 +16,11 @@ use axum::{
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 use url::Url;
 
-use crate::{env::Env, page::Page, vfs::VFSys};
+use crate::{env::Env, page::Page, src_fs::SrcFs};
 
 pub struct Server {
     router: Router,
-    vfs: VFSys,
+    src_fs: SrcFs,
     rx_cmd: broadcast::Receiver<Command>,
 }
 
@@ -50,7 +50,13 @@ fn spawn_env(root: &PathBuf) -> (JoinHandle<()>, mpsc::Sender<Message>, mpsc::Se
             loop {
                 tokio::select! {
                     Some(Message { responder, request}) = rx_job.recv() => {
-                        let mut page = Page::new(&mut env, &request).await?;
+                        let mut page = match Page::new(&mut env, &request).await {
+                            Ok(page) => page,
+                            Err(err) => {
+                                responder.send(Err(anyhow!("{}", err))).unwrap_or_else(|_| panic!("error sending to channel"));
+                                return Err(err);
+                            }
+                        };
 
                         env.bundler.clear();
                         env.bundler.push(format!(
@@ -74,6 +80,7 @@ fn spawn_env(root: &PathBuf) -> (JoinHandle<()>, mpsc::Sender<Message>, mpsc::Se
                         ));
 
                         page.script = env.bundle().await?;
+
                         responder.send(Ok(page)).unwrap_or_else(|_| panic!("error sending to channel"));
                     },
                     _ = rx_stop.recv() => {
@@ -85,7 +92,9 @@ fn spawn_env(root: &PathBuf) -> (JoinHandle<()>, mpsc::Sender<Message>, mpsc::Se
             Ok::<(), anyhow::Error>(())
         };
 
-        rt.block_on(future).unwrap();
+        if let Err(err) = rt.block_on(future) {
+            eprintln!("{}", err);
+        };
     });
 
     (join_handle, tx_job, tx_stop)
@@ -94,32 +103,37 @@ fn spawn_env(root: &PathBuf) -> (JoinHandle<()>, mpsc::Sender<Message>, mpsc::Se
 impl Server {
     pub fn new(root: &Path) -> Result<(Self, broadcast::Sender<Command>), anyhow::Error> {
         let root = root.to_path_buf().canonicalize()?;
-        let mut vfs = VFSys::new(&root)?;
-        vfs.scan()?;
+        let src_fs = SrcFs::new(&root)?;
+        src_fs.scan()?;
 
         let (mut handle, tx_job, mut tx_stop) = spawn_env(&root);
 
         let tx_job = Arc::new(Mutex::new(tx_job));
-        let new_handler = |root: PathBuf, tx_job: Arc<Mutex<mpsc::Sender<Message>>>| {
-            |request| get_page(request, root, tx_job)
+        let new_handler = |src_fs: SrcFs, tx_job: Arc<Mutex<mpsc::Sender<Message>>>| {
+            |request| get_page(request, src_fs, tx_job)
         };
 
         let router = Router::new();
-        let router = router.route("/", routing::get(new_handler(root.clone(), tx_job.clone())));
+        let router = router.route(
+            "/",
+            routing::get(new_handler(src_fs.clone(), tx_job.clone())),
+        );
         let router = router.route(
             "/*path",
-            routing::get(new_handler(root.clone(), tx_job.clone())),
+            routing::get(new_handler(src_fs.clone(), tx_job.clone())),
         );
 
-        let (tx_cmd, rx_cmd) = broadcast::channel(1);
+        let (tx_cmd, rx_cmd) = broadcast::channel(16);
 
         let mut rx_cmd_ = tx_cmd.subscribe();
+        let src_fs_ = src_fs.clone();
         tokio::spawn(async move {
             loop {
                 match rx_cmd_.recv().await.unwrap() {
                     Command::Restart => {
-                        tx_stop.send(true).await.unwrap();
+                        let _ = tx_stop.send(true).await;
                         let (handle_, tx_job_, tx_stop_) = spawn_env(&root);
+                        src_fs_.scan().unwrap();
 
                         *tx_job.lock().await = tx_job_;
                         drop(tx_stop);
@@ -144,7 +158,7 @@ impl Server {
         let server = Server {
             router,
             rx_cmd,
-            vfs,
+            src_fs,
         };
         Ok((server, tx_cmd))
     }
@@ -169,31 +183,21 @@ impl Server {
 
 async fn get_page(
     request: Request,
-    root: PathBuf,
+    src_fs: SrcFs,
     tx: Arc<Mutex<mpsc::Sender<Message>>>,
 ) -> Result<impl IntoResponse, ServerError> {
-    let path = root.join(".".to_string() + request.uri().path());
+    let abspath = request.uri().path();
+    let relpath = abspath.strip_prefix("/").unwrap_or(abspath);
 
-    if path.is_file() {
-        return Ok(fs::read(path)?.into_response());
+    if let Some(file) = src_fs.find(relpath) {
+        return Ok(src_fs.read(&file)?.into_response());
     }
 
-    let paths_maybe = &[
-        path.join("index.tsx"),
-        path.join("index.jsx"),
-        path.join("index.mdx"),
-        path.join("index.md"),
-        path.with_extension("tsx"),
-        path.with_extension("jsx"),
-        path.with_extension("mdx"),
-        path.with_extension("md"),
-    ];
-
-    let path = paths_maybe
-        .iter()
-        .find(|p| p.is_file())
-        .context("could not find file")?;
-    let url = Url::from_file_path(path).unwrap();
+    let url = if let Some(file) = src_fs.find_page_src(relpath) {
+        Url::from_file_path(file.path).unwrap()
+    } else {
+        return Err(anyhow!("could not find page").into());
+    };
 
     let (tx_page, rx_page) = oneshot::channel();
     tx.lock()

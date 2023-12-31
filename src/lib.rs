@@ -3,4 +3,4 @@ mod dom;
 mod env;
 pub mod page;
 pub mod server;
-mod vfs;
+mod src_fs;
