@@ -202,10 +202,13 @@ impl Runtime {
         Ok(global)
     }
 
-    pub async fn call<A, R>(&mut self, func: &Function, args: &[A]) -> Result<R, anyhow::Error>
+    pub async fn call<T>(
+        &mut self,
+        func: &Function,
+        args: &[&dyn erased_serde::Serialize],
+    ) -> Result<T, anyhow::Error>
     where
-        A: Serialize,
-        R: DeserializeOwned,
+        T: DeserializeOwned,
     {
         let args_v8: Vec<_> = {
             let scope: &mut v8::HandleScope<'_> = &mut self.worker.js_runtime.handle_scope();
@@ -225,14 +228,17 @@ impl Runtime {
             .await?;
         let scope = &mut self.worker.js_runtime.handle_scope();
         let result_local = v8::Local::new(scope, result_global);
-        let result: R = serde_v8::from_v8(scope, result_local)?;
+        let result: T = serde_v8::from_v8(scope, result_local)?;
         Ok(result)
     }
 
-    pub async fn call_by_name<A, R>(&mut self, func: &str, args: &[A]) -> Result<R, anyhow::Error>
+    pub async fn call_by_name<T>(
+        &mut self,
+        func: &str,
+        args: &[&dyn erased_serde::Serialize],
+    ) -> Result<T, anyhow::Error>
     where
-        A: Serialize,
-        R: DeserializeOwned,
+        T: DeserializeOwned,
     {
         let func = self
             .functions

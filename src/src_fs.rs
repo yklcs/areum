@@ -69,13 +69,13 @@ impl SrcFs {
     }
 
     pub fn out_file(&self, src: &SrcFile, to: &Path) -> Result<fs::File, anyhow::Error> {
-        let out = self.out_path(src, to)?;
+        let out = self.out_fpath(src, to)?;
         fs::create_dir_all(out.parent().unwrap())?;
         Ok(fs::File::create(out)?)
     }
 
     pub fn copy(&self, src: &SrcFile, to: &Path) -> Result<(), anyhow::Error> {
-        let out = self.out_path(src, to)?;
+        let out = self.out_fpath(src, to)?;
         fs::create_dir_all(out.parent().unwrap())?;
         fs::copy(&src.path, out)?;
         Ok(())
@@ -108,15 +108,15 @@ impl SrcFs {
             .map(Clone::clone)
     }
 
-    pub fn out_path(&self, src: &SrcFile, to: &Path) -> Result<PathBuf, anyhow::Error> {
+    pub fn site_path(&self, src: &SrcFile) -> Result<PathBuf, anyhow::Error> {
         let relative = src.path.strip_prefix(&self.0.lock().unwrap().root)?;
         match src.kind {
             SrcKind::Jsx | SrcKind::Mdx => {
-                // /index.tsx -> /index.html
-                // /dir/index.tsx -> /dir/index.html
-                // /dir.tsx -> /dir/index.html
+                // /index.tsx -> /
+                // /dir/index.tsx -> /dir
+                // /dir.tsx -> /dir
                 let without_ext = relative.with_extension("");
-                let dir = if Some(OsStr::new("index")) == without_ext.file_name() {
+                let path = if Some(OsStr::new("index")) == without_ext.file_name() {
                     without_ext
                         .parent()
                         .context("unable to get parent")?
@@ -124,7 +124,22 @@ impl SrcFs {
                 } else {
                     without_ext
                 };
-                Ok(to.join(dir.join("index.html")))
+
+                Ok(path)
+            }
+            _ => Ok(relative.to_path_buf()),
+        }
+    }
+
+    pub fn out_fpath(&self, src: &SrcFile, to: &Path) -> Result<PathBuf, anyhow::Error> {
+        let relative = src.path.strip_prefix(&self.0.lock().unwrap().root)?;
+        match src.kind {
+            SrcKind::Jsx | SrcKind::Mdx => {
+                // /index.tsx -> /index.html
+                // /dir/index.tsx -> /dir/index.html
+                // /dir.tsx -> /dir/index.html
+                let site_path = self.site_path(src)?.join("index.html");
+                Ok(to.join(site_path))
             }
             _ => Ok(to.join(relative)),
         }

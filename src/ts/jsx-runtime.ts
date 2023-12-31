@@ -1,5 +1,3 @@
-import * as _ from "./areum.ts";
-
 interface Node {
   vtag?: string;
   tag?: string;
@@ -56,7 +54,12 @@ const Fragment = ({ children }: { children?: Node | Node[] }): Node => ({
   props: { cascade: true, prop2: "wow!" },
 });
 
-export namespace JSX {
+namespace JSX {
+  export interface PageProps {
+    path: string;
+    generator: string;
+  }
+
   export interface Props {
     children?: Node | Node[];
     cascade?: boolean;
@@ -82,4 +85,4 @@ export namespace JSX {
   export type Element = Node;
 }
 
-export { jsx, jsxs, Fragment, runScript };
+export { jsx, jsxs, Fragment, runScript, type JSX };

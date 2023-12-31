@@ -31,7 +31,8 @@ pub enum Command {
 }
 
 struct Message {
-    request: Url,
+    url: Url,
+    path: PathBuf,
     responder: oneshot::Sender<Result<Page, anyhow::Error>>,
 }
 
@@ -49,8 +50,8 @@ fn spawn_env(root: &PathBuf) -> (JoinHandle<()>, mpsc::Sender<Message>, mpsc::Se
 
             loop {
                 tokio::select! {
-                    Some(Message { responder, request}) = rx_job.recv() => {
-                        let mut page = match Page::new(&mut env, &request).await {
+                    Some(Message { responder, url, path}) = rx_job.recv() => {
+                        let mut page = match Page::new(&mut env, &url, &path).await {
                             Ok(page) => page,
                             Err(err) => {
                                 responder.send(Err(anyhow!("{}", err))).unwrap_or_else(|_| panic!("error sending to channel"));
@@ -76,7 +77,7 @@ fn spawn_env(root: &PathBuf) -> (JoinHandle<()>, mpsc::Sender<Message>, mpsc::Se
                                 runScript(Page())
                             }}
                             "#,
-                            request.to_string()
+                            url.to_string()
                         ));
 
                         page.script = env.bundle().await?;
@@ -193,8 +194,11 @@ async fn get_page(
         return Ok(src_fs.read(&file)?.into_response());
     }
 
-    let url = if let Some(file) = src_fs.find_page_src(relpath) {
-        Url::from_file_path(file.path).unwrap()
+    let (url, path) = if let Some(file) = src_fs.find_page_src(relpath) {
+        (
+            Url::from_file_path(&file.path).unwrap(),
+            src_fs.site_path(&file)?,
+        )
     } else {
         return Err(anyhow!("could not find page").into());
     };
@@ -203,7 +207,8 @@ async fn get_page(
     tx.lock()
         .await
         .send(Message {
-            request: url,
+            url,
+            path,
             responder: tx_page,
         })
         .await

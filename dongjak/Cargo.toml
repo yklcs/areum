@@ -19,3 +19,4 @@ serde_v8 = { workspace = true }
 tokio = { workspace = true }
 url = { workspace = true }
 mdxjs = "0.1.20"
+erased-serde = "0.4.1"

@@ -18,7 +18,7 @@ impl Env {
             root,
             RuntimeOptions {
                 jsx_import_source: "/areum".into(),
-                extensions: vec![root_extension::init_ops_and_esm(root.into())],
+                extensions: vec![],
             },
         );
 
@@ -58,16 +58,6 @@ impl Env {
             )
             .await?;
         self.runtime.eval(jsx_mod).await?;
-
-        let areum_mod = self
-            .runtime
-            .load_from_string(
-                &Url::from_file_path(self.runtime.root().join("/areum")).unwrap(),
-                include_str!("ts/areum.ts"),
-                false,
-            )
-            .await?;
-        self.runtime.eval(areum_mod).await?;
 
         let loader_mod = self
             .runtime
@@ -110,22 +100,3 @@ impl Bundler {
         self.code.clear()
     }
 }
-
-#[op2]
-#[string]
-fn op_root(state: &OpState) -> String {
-    let root = state.borrow::<PathBuf>();
-    root.to_str().unwrap().to_string()
-}
-
-deno_core::extension!(
-    root_extension,
-    ops = [op_root],
-    options = {
-        root: PathBuf,
-    },
-    state = |state, options| {
-        state.put::<PathBuf>(options.root);
-    },
-    docs = "A small sample extension",
-);

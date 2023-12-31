@@ -32,7 +32,8 @@ impl Builder {
 
         for src in self.src_fs.lock().iter_pages() {
             let url = Url::from_file_path(&src.path).unwrap();
-            let mut page = Page::new(&mut self.env, &url).await?;
+            let path = self.src_fs.site_path(src)?;
+            let mut page = Page::new(&mut self.env, &url, &path).await?;
 
             let f = self.src_fs.out_file(&src, outdir)?;
             let mut w = io::BufWriter::new(f);

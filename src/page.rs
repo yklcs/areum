@@ -1,4 +1,8 @@
-use std::{convert::Infallible, io};
+use std::{
+    convert::Infallible,
+    io,
+    path::{Path, PathBuf},
+};
 
 use anyhow::anyhow;
 
@@ -10,6 +14,7 @@ use lightningcss::{
 };
 use lol_html::{element, html_content::ContentType, HtmlRewriter};
 use rand::{distributions::Alphanumeric, Rng};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use url::Url;
 
@@ -31,14 +36,25 @@ pub struct Page {
     id: String,
 }
 
+#[derive(Serialize)]
+struct PageProps {
+    path: String,
+    generator: String,
+}
+
 impl Page {
-    pub async fn new(env: &mut Env, url: &Url) -> Result<Self, anyhow::Error> {
+    pub async fn new(env: &mut Env, url: &Url, path: &Path) -> Result<Self, anyhow::Error> {
         env.runtime.add_root(url).await;
+
+        let props = PageProps {
+            path: path.to_string_lossy().into(),
+            generator: format!("Areum {}", env!("CARGO_PKG_VERSION")),
+        };
 
         let mut arena = Arena::new();
         let boxed: BoxedElement = env
             .runtime
-            .call_by_name(Env::LOADER_FN_KEY, &[url.to_string()])
+            .call_by_name(Env::LOADER_FN_KEY, &[&url.to_string(), &props])
             .await?;
         let dom = ArenaElement::from_boxed(&mut arena, &boxed, None);
 
