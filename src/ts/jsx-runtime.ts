@@ -35,7 +35,7 @@ const jsx = (element: JSX.ElementType, props: JSX.Props): Node => {
       script: element.script,
       ...element(props),
     };
-    node.props.cascade = props.cascade;
+    node.props.cascade ||= props.cascade;
   } else {
     const { children, ...rest } = props;
     node = {
@@ -50,10 +50,10 @@ const jsx = (element: JSX.ElementType, props: JSX.Props): Node => {
 
 const jsxs = jsx;
 
-const Fragment = ({ children }: { children?: Node | Node[] }) => ({
+const Fragment = ({ children }: { children?: Node | Node[] }): Node => ({
   vtag: "Fragment",
   children,
-  props: {},
+  props: { cascade: true, prop2: "wow!" },
 });
 
 export namespace JSX {
