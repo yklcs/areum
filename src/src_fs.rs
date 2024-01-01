@@ -2,20 +2,21 @@ use std::{
     ffi::OsStr,
     fs,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, MutexGuard},
+    sync::Arc,
 };
 
 use anyhow::Context;
+use tokio::sync::{RwLock, RwLockReadGuard};
 
 #[derive(Clone)]
-pub struct SrcFs(Arc<Mutex<SrcFsInner>>);
+pub struct SrcFs(Arc<RwLock<SrcFsInner>>);
 
 struct SrcFsInner {
     root: PathBuf,
     entries: Vec<SrcFile>,
 }
 
-pub struct SrcFsGuard<'a>(MutexGuard<'a, SrcFsInner>);
+pub struct SrcFsGuard<'a>(RwLockReadGuard<'a, SrcFsInner>);
 
 impl SrcFsGuard<'_> {
     pub fn iter(&self) -> impl Iterator<Item = &SrcFile> + '_ {
@@ -38,44 +39,43 @@ impl SrcFsGuard<'_> {
 }
 
 impl SrcFs {
-    pub fn new(root: impl AsRef<Path>) -> Result<Self, anyhow::Error> {
+    pub fn new(root: impl AsRef<Path>) -> Self {
         let inner = SrcFsInner {
             root: root.as_ref().to_path_buf(),
             entries: Vec::new(),
         };
-        let src_fs = SrcFs(Arc::new(Mutex::new(inner)));
-        src_fs.scan()?;
-        Ok(src_fs)
+        let src_fs = SrcFs(Arc::new(RwLock::new(inner)));
+        src_fs
     }
 
-    pub fn root(&self) -> PathBuf {
-        self.0.lock().unwrap().root.clone()
+    pub async fn root(&self) -> PathBuf {
+        self.0.read().await.root.clone()
     }
 
-    pub fn scan(&self) -> Result<(), anyhow::Error> {
-        let entries = ignore::WalkBuilder::new(&self.0.lock().unwrap().root)
+    pub async fn scan(&self) -> Result<(), anyhow::Error> {
+        let entries = ignore::WalkBuilder::new(&self.0.write().await.root)
             .add_custom_ignore_filename(".areumignore")
             .build()
             .filter(|x| x.clone().unwrap().file_type().unwrap().is_file())
             .map(|dir| Ok(SrcFile::from(dir?)))
             .collect::<Result<Vec<_>, anyhow::Error>>()?;
 
-        self.0.lock().unwrap().entries = entries;
+        self.0.write().await.entries = entries;
         Ok(())
     }
 
-    pub fn lock(&self) -> SrcFsGuard<'_> {
-        SrcFsGuard(self.0.lock().unwrap())
+    pub async fn lock(&self) -> SrcFsGuard<'_> {
+        SrcFsGuard(self.0.read().await)
     }
 
-    pub fn out_file(&self, src: &SrcFile, to: &Path) -> Result<fs::File, anyhow::Error> {
-        let out = self.out_fpath(src, to)?;
+    pub async fn out_file(&self, src: &SrcFile, to: &Path) -> Result<fs::File, anyhow::Error> {
+        let out = self.out_fpath(src, to).await?;
         fs::create_dir_all(out.parent().unwrap())?;
         Ok(fs::File::create(out)?)
     }
 
-    pub fn copy(&self, src: &SrcFile, to: &Path) -> Result<(), anyhow::Error> {
-        let out = self.out_fpath(src, to)?;
+    pub async fn copy(&self, src: &SrcFile, to: &Path) -> Result<(), anyhow::Error> {
+        let out = self.out_fpath(src, to).await?;
         fs::create_dir_all(out.parent().unwrap())?;
         fs::copy(&src.path, out)?;
         Ok(())
@@ -85,17 +85,19 @@ impl SrcFs {
         Ok(fs::read(&src.path)?)
     }
 
-    pub fn find(&self, path: impl AsRef<Path>) -> Option<SrcFile> {
-        let resolved = self.root().join(path);
+    pub async fn find(&self, path: impl AsRef<Path>) -> Option<SrcFile> {
+        let resolved = self.root().await.join(path);
         self.lock()
+            .await
             .iter()
             .find(|&f| f.path == resolved)
             .map(Clone::clone)
     }
 
-    pub fn find_page_src(&self, path: impl AsRef<Path>) -> Option<SrcFile> {
-        let resolved = self.root().join(path);
+    pub async fn find_page_src(&self, path: impl AsRef<Path>) -> Option<SrcFile> {
+        let resolved = self.root().await.join(path);
         self.lock()
+            .await
             .iter_pages()
             .find(
                 // looking for /page
@@ -108,8 +110,9 @@ impl SrcFs {
             .map(Clone::clone)
     }
 
-    pub fn site_path(&self, src: &SrcFile) -> Result<PathBuf, anyhow::Error> {
-        let relative = src.path.strip_prefix(&self.0.lock().unwrap().root)?;
+    pub async fn site_path(&self, src: &SrcFile) -> Result<PathBuf, anyhow::Error> {
+        let relative = src.path.strip_prefix(&self.0.read().await.root)?;
+
         match src.kind {
             SrcKind::Jsx | SrcKind::Mdx => {
                 // /index.tsx -> /
@@ -131,14 +134,14 @@ impl SrcFs {
         }
     }
 
-    pub fn out_fpath(&self, src: &SrcFile, to: &Path) -> Result<PathBuf, anyhow::Error> {
-        let relative = src.path.strip_prefix(&self.0.lock().unwrap().root)?;
+    pub async fn out_fpath(&self, src: &SrcFile, to: &Path) -> Result<PathBuf, anyhow::Error> {
+        let relative = src.path.strip_prefix(&self.0.read().await.root)?;
         match src.kind {
             SrcKind::Jsx | SrcKind::Mdx => {
                 // /index.tsx -> /index.html
                 // /dir/index.tsx -> /dir/index.html
                 // /dir.tsx -> /dir/index.html
-                let site_path = self.site_path(src)?.join("index.html");
+                let site_path = self.site_path(src).await?.join("index.html");
                 Ok(to.join(site_path))
             }
             _ => Ok(to.join(relative)),

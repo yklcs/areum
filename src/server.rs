@@ -104,8 +104,7 @@ fn spawn_env(root: &PathBuf) -> (JoinHandle<()>, mpsc::Sender<Message>, mpsc::Se
 impl Server {
     pub fn new(root: &Path) -> Result<(Self, broadcast::Sender<Command>), anyhow::Error> {
         let root = root.to_path_buf().canonicalize()?;
-        let src_fs = SrcFs::new(&root)?;
-        src_fs.scan()?;
+        let src_fs = SrcFs::new(&root);
 
         let (mut handle, tx_job, mut tx_stop) = spawn_env(&root);
 
@@ -134,7 +133,7 @@ impl Server {
                     Command::Restart => {
                         let _ = tx_stop.send(true).await;
                         let (handle_, tx_job_, tx_stop_) = spawn_env(&root);
-                        src_fs_.scan().unwrap();
+                        src_fs_.scan().await.unwrap();
 
                         *tx_job.lock().await = tx_job_;
                         drop(tx_stop);
@@ -165,6 +164,7 @@ impl Server {
     }
 
     pub async fn serve(self, address: &str) -> Result<(), anyhow::Error> {
+        self.src_fs.scan().await?;
         let listener = tokio::net::TcpListener::bind(address).await?;
         axum::serve(listener, self.router)
             .with_graceful_shutdown(async move {
@@ -190,14 +190,14 @@ async fn get_page(
     let abspath = request.uri().path();
     let relpath = abspath.strip_prefix("/").unwrap_or(abspath);
 
-    if let Some(file) = src_fs.find(relpath) {
+    if let Some(file) = src_fs.find(relpath).await {
         return Ok(src_fs.read(&file)?.into_response());
     }
 
-    let (url, path) = if let Some(file) = src_fs.find_page_src(relpath) {
+    let (url, path) = if let Some(file) = src_fs.find_page_src(relpath).await {
         (
             Url::from_file_path(&file.path).unwrap(),
-            src_fs.site_path(&file)?,
+            src_fs.site_path(&file).await?,
         )
     } else {
         return Err(anyhow!("could not find page").into());

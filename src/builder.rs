@@ -21,21 +21,23 @@ impl Builder {
 
         Ok(Builder {
             env,
-            src_fs: SrcFs::new(&root)?,
+            src_fs: SrcFs::new(&root),
             root,
         })
     }
 
     pub async fn build(&mut self, outdir: &Path) -> Result<(), anyhow::Error> {
-        self.src_fs.scan()?;
+        self.src_fs.scan().await?;
         fs::create_dir_all(outdir)?;
 
-        for src in self.src_fs.lock().iter_pages() {
+        for src in self.src_fs.lock().await.iter_pages() {
             let url = Url::from_file_path(&src.path).unwrap();
-            let path = self.src_fs.site_path(src)?;
+
+            let path = self.src_fs.site_path(src).await?;
+
             let mut page = Page::new(&mut self.env, &url, &path).await?;
 
-            let f = self.src_fs.out_file(&src, outdir)?;
+            let f = self.src_fs.out_file(&src, outdir).await?;
             let mut w = io::BufWriter::new(f);
             page.render(&mut w)?;
             w.flush()?;
@@ -48,8 +50,8 @@ impl Builder {
             ));
         }
 
-        for asset in self.src_fs.lock().iter_assets() {
-            self.src_fs.copy(asset, outdir)?;
+        for asset in self.src_fs.lock().await.iter_assets() {
+            self.src_fs.copy(asset, outdir).await?;
         }
 
         self.env.bundler.push(format!(
