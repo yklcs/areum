@@ -3,19 +3,6 @@ use std::collections::HashMap;
 use anyhow::anyhow;
 use serde::{Deserialize, Serialize};
 
-pub trait Element<R> {
-    fn tag(&self) -> Option<String>;
-    fn vtag(&self) -> Option<String>;
-
-    fn children(&self) -> Option<&Children<R>>;
-    fn parent(&self) -> Option<&R>;
-
-    fn style(&self) -> Option<String>;
-
-    fn props(&self) -> &Props;
-    fn props_mut(&mut self) -> &mut Props;
-}
-
 type PropValue = serde_json::Value;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -133,7 +120,7 @@ pub enum Children<T> {
 }
 
 pub mod arena {
-    use super::{boxed::BoxedElement, Children, Element, Props};
+    use super::{boxed::BoxedElement, Children, Props};
 
     pub struct Arena {
         arena: Vec<ArenaElement>,
@@ -163,63 +150,77 @@ pub mod arena {
     pub struct ArenaId(usize);
 
     #[derive(Clone)]
-    pub struct ArenaElement {
-        tag: Option<String>,
-        vtag: Option<String>,
-        props: Props,
-        style: Option<String>,
-        children: Option<Children<ArenaId>>,
-        parent: Option<ArenaId>,
-    }
+    pub enum ArenaElement {
+        Intrinsic {
+            props: Props,
+            children: Option<Children<ArenaId>>,
+            scope: String,
 
-    impl Element<ArenaId> for ArenaElement {
-        fn tag(&self) -> Option<String> {
-            self.tag.clone()
-        }
+            tag: String,
+        },
+        Virtual {
+            props: Props,
+            children: Option<Children<ArenaId>>,
+            scope: String,
 
-        fn vtag(&self) -> Option<String> {
-            self.vtag.clone()
-        }
-
-        fn style(&self) -> Option<String> {
-            self.style.clone()
-        }
-
-        fn children(&self) -> Option<&Children<ArenaId>> {
-            self.children.as_ref()
-        }
-
-        fn parent(&self) -> Option<&ArenaId> {
-            self.parent.as_ref()
-        }
-
-        fn props(&self) -> &Props {
-            &self.props
-        }
-
-        fn props_mut(&mut self) -> &mut Props {
-            &mut self.props
-        }
+            style: Option<String>,
+        },
     }
 
     impl ArenaElement {
+        pub fn props(&self) -> Props {
+            match self {
+                Self::Intrinsic { props, .. } => props.clone(),
+                Self::Virtual { props, .. } => props.clone(),
+            }
+        }
+
+        pub fn props_mut(&mut self) -> &mut Props {
+            match self {
+                Self::Intrinsic { props, .. } => props,
+                Self::Virtual { props, .. } => props,
+            }
+        }
+
+        pub fn children(&self) -> Option<&Children<ArenaId>> {
+            match self {
+                Self::Intrinsic { children, .. } => children.as_ref(),
+                Self::Virtual { children, .. } => children.as_ref(),
+            }
+        }
+
+        pub fn children_mut(&mut self) -> &mut Option<Children<ArenaId>> {
+            match self {
+                Self::Intrinsic { children, .. } => children,
+                Self::Virtual { children, .. } => children,
+            }
+        }
+
+        pub fn scope(&self) -> String {
+            match self {
+                Self::Intrinsic { scope, .. } => scope.clone(),
+                Self::Virtual { scope, .. } => scope.clone(),
+            }
+        }
+
         pub fn to_string(&self, arena: &Arena) -> String {
-            if self.vtag().as_deref() == Some("Fragment") {
-                self.children
-                    .as_ref()
-                    .map_or("".into(), |c| c.to_string(arena))
-            } else {
-                format!(
-                    "<{0}{2}{3}>{1}</{0}>",
-                    self.tag.clone().unwrap_or("".to_string()),
-                    self.children
-                        .as_ref()
-                        .map_or("".into(), |c| c.to_string(arena)),
-                    self.props.to_string(),
-                    self.vtag()
-                        .map(|s| format!(r#" component="{}""#, s))
-                        .unwrap_or("".into())
-                )
+            match self {
+                Self::Intrinsic {
+                    props,
+                    children,
+                    tag,
+                    ..
+                } => {
+                    format!(
+                        "<{tag}{1}>{0}</{tag}>",
+                        children.clone().map_or("".into(), |c| c.to_string(arena)),
+                        props.to_string(),
+                    )
+                }
+                Self::Virtual { children, .. } => match children {
+                    Some(children) => children.to_string(arena),
+                    None => "".into(),
+                },
             }
         }
     }
@@ -230,13 +231,29 @@ pub mod arena {
             boxed: &BoxedElement,
             parent: Option<ArenaId>,
         ) -> ArenaId {
-            let element = ArenaElement {
-                tag: boxed.tag(),
-                vtag: boxed.vtag(),
-                props: boxed.props().clone(),
-                style: boxed.style(),
-                children: None,
-                parent,
+            let element = match boxed {
+                BoxedElement::Intrinsic {
+                    props,
+                    children,
+                    scope,
+                    tag,
+                } => ArenaElement::Intrinsic {
+                    props: props.clone(),
+                    children: None,
+                    scope: scope.clone(),
+                    tag: tag.clone(),
+                },
+                BoxedElement::Virtual {
+                    props,
+                    children,
+                    scope,
+                    style,
+                } => ArenaElement::Virtual {
+                    props: props.clone(),
+                    children: None,
+                    scope: scope.clone(),
+                    style: style.clone(),
+                },
             };
 
             arena.arena.push(element);
@@ -264,8 +281,8 @@ pub mod arena {
                 }
             }
 
-            let children = from_boxed_children(arena, boxed.children().unwrap(), Some(id));
-            arena[id].children = Some(children);
+            let children = from_boxed_children(arena, &boxed.children().unwrap(), Some(id));
+            *arena[id].children_mut() = Some(children);
 
             id
         }
@@ -287,45 +304,49 @@ pub mod arena {
 }
 
 pub mod boxed {
-    use super::{Children, Element, Props};
+    use super::{Children, Props};
     use serde::{Deserialize, Serialize};
 
-    #[derive(Serialize, Deserialize, Debug)]
-    pub struct BoxedElement {
-        tag: Option<String>,
-        vtag: Option<String>,
-        style: Option<String>,
-        children: Option<Box<Children<Self>>>,
-        props: Props,
+    #[derive(Serialize, Deserialize, Debug, Clone)]
+    #[serde(tag = "kind")]
+    #[serde(rename_all = "lowercase")]
+    pub enum BoxedElement {
+        Intrinsic {
+            props: Props,
+            children: Option<Box<Children<Self>>>,
+            scope: String,
+
+            tag: String,
+        },
+        Virtual {
+            props: Props,
+            children: Option<Box<Children<Self>>>,
+            scope: String,
+
+            style: Option<String>,
+        },
     }
 
-    impl Element<Self> for BoxedElement {
-        fn tag(&self) -> Option<String> {
-            self.tag.clone()
+    impl BoxedElement {
+        pub fn props(&self) -> Props {
+            match self {
+                Self::Intrinsic { props, .. } => props.clone(),
+                Self::Virtual { props, .. } => props.clone(),
+            }
         }
 
-        fn vtag(&self) -> Option<String> {
-            self.vtag.clone()
+        pub fn children(&self) -> Option<Box<Children<Self>>> {
+            match self {
+                Self::Intrinsic { children, .. } => children.clone(),
+                Self::Virtual { children, .. } => children.clone(),
+            }
         }
 
-        fn style(&self) -> Option<String> {
-            self.style.clone()
-        }
-
-        fn children(&self) -> Option<&Children<Self>> {
-            self.children.as_deref()
-        }
-
-        fn parent(&self) -> Option<&Self> {
-            None
-        }
-
-        fn props(&self) -> &Props {
-            &self.props
-        }
-
-        fn props_mut(&mut self) -> &mut Props {
-            &mut self.props
+        pub fn scope(&self) -> String {
+            match self {
+                Self::Intrinsic { scope, .. } => scope.clone(),
+                Self::Virtual { scope, .. } => scope.clone(),
+            }
         }
     }
 }

@@ -1,6 +1,6 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
-use deno_core::{op2, v8, OpState};
+use deno_core::{op2, v8};
 use dongjak::runtime::{Runtime, RuntimeOptions};
 use rand::{distributions::Alphanumeric, Rng};
 use url::Url;
@@ -18,7 +18,7 @@ impl Env {
             root,
             RuntimeOptions {
                 jsx_import_source: "/areum".into(),
-                extensions: vec![],
+                extensions: vec![rand_extension::init_ops_and_esm()],
             },
         );
 
@@ -100,3 +100,19 @@ impl Bundler {
         self.code.clear()
     }
 }
+
+#[op2]
+#[string]
+fn randString(n: u32) -> String {
+    rand::thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(n as usize)
+        .map(char::from)
+        .collect()
+}
+
+deno_core::extension!(
+    rand_extension,
+    ops = [randString],
+    docs = "Extension providing operations for randomness",
+);
