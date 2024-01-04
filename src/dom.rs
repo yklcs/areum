@@ -229,12 +229,12 @@ pub mod arena {
         pub fn from_boxed(
             arena: &mut Arena,
             boxed: &BoxedElement,
-            parent: Option<ArenaId>,
+            _parent: Option<ArenaId>,
         ) -> ArenaId {
             let element = match boxed {
                 BoxedElement::Intrinsic {
                     props,
-                    children,
+                    children: _,
                     scope,
                     tag,
                 } => ArenaElement::Intrinsic {
@@ -245,7 +245,7 @@ pub mod arena {
                 },
                 BoxedElement::Virtual {
                     props,
-                    children,
+                    children: _,
                     scope,
                     style,
                 } => ArenaElement::Virtual {

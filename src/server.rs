@@ -1,11 +1,10 @@
 use std::{
-    fs,
     path::{Path, PathBuf},
     sync::Arc,
     thread::{self, JoinHandle},
 };
 
-use anyhow::{anyhow, Context};
+use anyhow::anyhow;
 use axum::{
     extract::Request,
     http::StatusCode,
@@ -143,7 +142,7 @@ impl Server {
                         tx_stop = tx_stop_;
                     }
                     Command::Stop => {
-                        tx_stop.send(true).await.unwrap();
+                        let _ = tx_stop.send(true).await;
 
                         drop(tx_job);
                         drop(tx_stop);

@@ -1,8 +1,4 @@
-use std::{
-    convert::Infallible,
-    io,
-    path::{Path, PathBuf},
-};
+use std::{convert::Infallible, io, path::Path};
 
 use anyhow::anyhow;
 
@@ -13,7 +9,6 @@ use lightningcss::{
     visitor::Visit,
 };
 use lol_html::{element, html_content::ContentType, HtmlRewriter};
-use rand::{distributions::Alphanumeric, Rng};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use url::Url;
