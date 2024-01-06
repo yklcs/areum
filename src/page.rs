@@ -200,7 +200,7 @@ impl Page {
 }
 
 struct CssVisitor {
-    unique: String,
+    scope: String,
 }
 
 impl<'i> lightningcss::visitor::Visitor<'i> for CssVisitor {
@@ -211,41 +211,62 @@ impl<'i> lightningcss::visitor::Visitor<'i> for CssVisitor {
     }
 
     fn visit_selector(&mut self, selector: &mut Selector<'i>) -> Result<(), Self::Error> {
-        let v: Vec<_> = selector
-            .iter_raw_parse_order_from(0)
-            .map(|x| x.clone())
-            .flat_map(|mut c| match c {
-                Component::ID(_) | Component::Class(_) | Component::LocalName(_) => {
-                    vec![c, Component::Class(self.unique.clone().into())]
-                }
-                Component::Is(ref mut inner)
-                | Component::Has(ref mut inner)
-                | Component::Negation(ref mut inner)
-                | Component::Where(ref mut inner) => {
-                    for i in inner.iter_mut() {
-                        self.visit_selector(i);
-                    }
-                    vec![c]
-                }
-                Component::NonTSPseudoClass(pseudo) => match pseudo {
-                    PseudoClass::Global { selector } => {
-                        let inner = *selector;
-                        inner
-                            .iter_raw_parse_order_from(0)
-                            .map(|x| x.clone())
-                            .collect()
+        let mut complex = Vec::new();
+        let mut compound = Vec::new();
+        let mut it = selector.iter();
+
+        loop {
+            if let Some(component) = it.next() {
+                match component {
+                    Component::NonTSPseudoClass(PseudoClass::Global { selector }) => {
+                        complex.extend(selector.iter_raw_parse_order_from(0).map(Clone::clone));
+                        compound.clear();
+
+                        if let Some(combinator) = it.next_sequence() {
+                            complex.push(Component::Combinator(combinator));
+                        } else {
+                            break;
+                        }
                     }
                     _ => {
-                        vec![Component::NonTSPseudoClass(pseudo)]
+                        compound.push(component.clone());
                     }
-                },
-                _ => {
-                    vec![c]
                 }
-            })
-            .collect();
+            } else {
+                complex.push(Component::Class(self.scope.clone().into()));
+                complex.extend(compound.iter().rev().map(Clone::clone));
+                compound.clear();
 
-        *selector = v.try_into()?;
+                if let Some(combinator) = it.next_sequence() {
+                    complex.push(Component::Combinator(combinator));
+                } else {
+                    break;
+                }
+            }
+        }
+
+        complex.reverse();
+
+        // while let Some(component) = it.next() {
+        //     match component {
+        //         Component::NonTSPseudoClass(PseudoClass::Global { selector }) => {
+        //             v.extend(selector.iter_raw_match_order().map(Clone::clone));
+        //             continue;
+        //         }
+        //         _ => {
+        //             v.push(component.clone());
+        //         }
+        //     }
+
+        //     match it.peek() {
+        //         Some(Component::Combinator(_)) | None => {
+        //             v.push(Component::Class(self.scope.clone().into()));
+        //         }
+        //         _ => {}
+        //     }
+        // }
+
+        *selector = complex.try_into()?;
 
         Ok(())
     }
@@ -269,7 +290,7 @@ fn process_css(style: &str, unique: &str) -> Result<String, anyhow::Error> {
 
     // Rescope stylesheet with unique ID class
     let visitor = &mut CssVisitor {
-        unique: unique.to_string(),
+        scope: unique.to_string(),
     };
     stylesheet.visit(visitor)?;
 

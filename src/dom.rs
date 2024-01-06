@@ -55,6 +55,7 @@ impl ToString for Props {
         let mut stringified = self
             .0
             .iter()
+            .filter(|(key, _)| !key.starts_with("_"))
             .map(|kv| Prop::from(kv).to_string())
             .collect::<Vec<_>>()
             .join(" ");
