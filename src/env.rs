@@ -1,8 +1,10 @@
 use std::path::Path;
 
+use blake2::{digest::consts, Blake2b, Digest};
 use deno_core::{op2, v8};
 use dongjak::runtime::{Runtime, RuntimeOptions};
 use rand::{distributions::Alphanumeric, Rng};
+// use sha2::{Digest, Sha256};
 use url::Url;
 
 pub struct Env {
@@ -113,6 +115,13 @@ fn randString(n: u32) -> String {
 
 deno_core::extension!(
     rand_extension,
-    ops = [randString],
+    ops = [randString, hashString],
     docs = "Extension providing operations for randomness",
 );
+
+#[op2]
+#[string]
+fn hashString(#[string] str: String) -> String {
+    let hash = Blake2b::<consts::U6>::digest(str);
+    bs58::encode(hash).into_string()
+}

@@ -1,5 +1,6 @@
-const randString: (n: number) => string =
-  Deno.core.ops.randString;
+const randString: (n: number) => string = Deno.core.ops.randString;
+
+const hashString: (str: string) => string = Deno.core.ops.hashString;
 
 const runScript = (node: Node) => {
   if (node.kind === "virtual" && node.script) {
@@ -82,7 +83,16 @@ const render = (element: JSX.Element): Node | undefined => {
     let node = {} as VirtualNode;
     node.kind = "virtual";
 
-    const newScope = randString(8);
+    // const newScope = randString(8);
+
+    if (typeof element.element.style === "function") {
+      node.style = element.element.style(element.props);
+    } else {
+      node.style = element.element.style;
+    }
+    node.script = element.element.script;
+
+    const newScope = hashString(node.style);
 
     if (element.element !== Fragment) {
       applyScope(element, newScope);
@@ -96,13 +106,6 @@ const render = (element: JSX.Element): Node | undefined => {
     } else {
       node.children = renderChildren(element.children);
     }
-
-    if (typeof element.element.style === "function") {
-      node.style = element.element.style(element.props);
-    } else {
-      node.style = element.element.style;
-    }
-    node.script = element.element.script;
 
     node_ = node;
   } else {

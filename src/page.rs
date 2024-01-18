@@ -1,7 +1,8 @@
-use std::{convert::Infallible, io, path::Path};
+use std::{collections::HashSet, convert::Infallible, io, path::Path};
 
 use anyhow::anyhow;
 
+use blake2::{digest::consts, Blake2b, Digest};
 use lightningcss::{
     css_modules,
     selector::{Component, PseudoClass, Selector},
@@ -10,7 +11,6 @@ use lightningcss::{
 };
 use lol_html::{element, html_content::ContentType, HtmlRewriter};
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use url::Url;
 
 use crate::{
@@ -27,6 +27,7 @@ pub struct Page {
     arena: Arena,
     dom: ArenaId,
     style: String,
+    scopes: HashSet<String>,
     pub(crate) script: String,
     id: String,
 }
@@ -53,7 +54,8 @@ impl Page {
             .await?;
         let dom = ArenaElement::from_boxed(&mut arena, &boxed, None);
 
-        let id = format!("{:x}", Sha256::digest(url.to_string()));
+        let hash = Blake2b::<consts::U6>::digest(url.to_string());
+        let id = bs58::encode(hash).into_string();
 
         let script = format!(
             r#"
@@ -73,6 +75,7 @@ impl Page {
             arena,
             dom,
             style: String::new(),
+            scopes: HashSet::new(),
             script,
             id,
         };
@@ -185,7 +188,9 @@ impl Page {
         } = element
         {
             let unique = format!("s{scope}");
-            self.style += &process_css(&style, &unique)?;
+            if self.scopes.insert(unique.clone()) {
+                self.style += &process_css(&style, &unique)?;
+            }
         }
 
         if let Some(children) = element.children() {
