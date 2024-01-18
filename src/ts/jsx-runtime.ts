@@ -1,5 +1,5 @@
 const randString: (n: number) => string =
-  Deno[Deno.internal].core.ops.randString;
+  Deno.core.ops.randString;
 
 const runScript = (node: Node) => {
   if (node.kind === "virtual" && node.script) {
