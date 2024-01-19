@@ -7,7 +7,8 @@ use std::{
 
 use anyhow::anyhow;
 use deno_ast::MediaType;
-use deno_core::{futures::FutureExt, ModuleType, RequestedModuleType, ModuleSourceCode};
+use deno_core::{futures::FutureExt, ModuleSourceCode, ModuleType, RequestedModuleType};
+use mdxjs::{MdxConstructs, MdxParseOptions};
 use url::Url;
 
 #[derive(Clone)]
@@ -140,6 +141,37 @@ pub(crate) fn transpile(
             let code = mdxjs::compile(
                 &code,
                 &mdxjs::Options {
+                    parse: MdxParseOptions {
+                        constructs: MdxConstructs {
+                            attention: true,
+                            block_quote: true,
+                            character_escape: true,
+                            character_reference: true,
+                            code_fenced: true,
+                            code_text: true,
+                            definition: true,
+                            frontmatter: true,
+                            gfm_autolink_literal: false,
+                            gfm_label_start_footnote: false,
+                            gfm_footnote_definition: false,
+                            gfm_strikethrough: false,
+                            gfm_table: false,
+                            gfm_task_list_item: false,
+                            hard_break_escape: true,
+                            hard_break_trailing: true,
+                            heading_atx: true,
+                            heading_setext: true,
+                            label_start_image: true,
+                            label_start_link: true,
+                            label_end: true,
+                            list_item: true,
+                            math_flow: true,
+                            math_text: true,
+                            thematic_break: true,
+                        },
+                        gfm_strikethrough_single_tilde: false,
+                        math_text_single_dollar: true,
+                    },
                     jsx_import_source: Some(jsx_import_source.into()),
                     ..Default::default()
                 },

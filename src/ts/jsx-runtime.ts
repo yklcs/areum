@@ -1,5 +1,4 @@
 const randString: (n: number) => string = Deno.core.ops.randString;
-
 const hashString: (str: string) => string = Deno.core.ops.hashString;
 
 const runScript = (node: Node) => {
@@ -127,6 +126,16 @@ const render = (element: JSX.Element): Node | undefined => {
 
 const jsx = (element: JSX.ElementType, props: JSX.Props) => {
   let { children, ...rest } = props;
+
+  if (rest.className) {
+    if (rest.class) {
+      rest.class += " ";
+      rest.class += rest.className;
+    } else {
+      rest.class = rest.className;
+    }
+    rest.className = undefined;
+  }
 
   const node: JSX.Element = {
     element,

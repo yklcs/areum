@@ -9,7 +9,7 @@ use lightningcss::{
     stylesheet::{ParserFlags, ParserOptions, PrinterOptions, StyleSheet},
     visitor::Visit,
 };
-use lol_html::{element, html_content::ContentType, HtmlRewriter};
+use lol_html::{element, html_content::ContentType, text, HtmlRewriter};
 use serde::Serialize;
 use url::Url;
 
@@ -103,6 +103,29 @@ impl Page {
         let mut rewriter = HtmlRewriter::new(
             lol_html::Settings {
                 element_content_handlers: vec![
+                    text!(".language-math.math-inline", |t| {
+                        if !t.last_in_text_node() {
+                            let rendered = katex::render(t.as_str().trim())?;
+                            t.replace(&rendered, ContentType::Html);
+                        }
+                        Ok(())
+                    }),
+                    text!(".language-math.math-display", |t| {
+                        if !t.last_in_text_node() {
+                            let opts = katex::Opts::builder().display_mode(true).build()?;
+                            let rendered = katex::render_with_opts(t.as_str(), opts)?;
+                            t.replace(&rendered, ContentType::Html);
+                        }
+                        Ok(())
+                    }),
+                    element!(".language-math.math-display", |el| {
+                        el.remove_and_keep_content();
+                        Ok(())
+                    }),
+                    element!(".language-math.math-inline", |el| {
+                        el.remove_and_keep_content();
+                        Ok(())
+                    }),
                     element!("body", |el| {
                         let tag = format!(r#"<script type="module">{}</script>"#, self.script);
                         el.append(&tag, ContentType::Html);
