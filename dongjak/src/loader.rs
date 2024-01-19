@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::anyhow;
 use deno_ast::MediaType;
-use deno_core::{futures::FutureExt, ModuleType};
+use deno_core::{futures::FutureExt, ModuleType, RequestedModuleType, ModuleSourceCode};
 use url::Url;
 
 #[derive(Clone)]
@@ -108,6 +108,7 @@ impl deno_core::ModuleLoader for Loader {
         specifier: &Url,
         _maybe_referrer: Option<&Url>,
         _is_dyn_import: bool,
+        _requested_module_type: RequestedModuleType,
     ) -> Pin<Box<deno_core::ModuleSourceFuture>> {
         let specifier = specifier.clone();
         let module_type = module_type(&specifier);
@@ -117,7 +118,7 @@ impl deno_core::ModuleLoader for Loader {
             loader.inject(specifier.clone(), code.clone());
             Ok(deno_core::ModuleSource::new(
                 module_type,
-                code.into(),
+                ModuleSourceCode::String(code.into()),
                 &specifier,
             ))
         }
