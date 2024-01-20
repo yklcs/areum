@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{io::Write, path::Path};
 
 use blake2::{digest::consts, Blake2b, Digest};
 use deno_core::{op2, v8};
@@ -20,7 +20,10 @@ impl Env {
             root,
             RuntimeOptions {
                 jsx_import_source: "/areum".into(),
-                extensions: vec![rand_extension::init_ops_and_esm()],
+                extensions: vec![
+                    rand_extension::init_ops_and_esm(),
+                    print_extension::init_ops_and_esm(),
+                ],
             },
         );
 
@@ -124,4 +127,22 @@ deno_core::extension!(
 fn hashString(#[string] str: String) -> String {
     let hash = Blake2b::<consts::U6>::digest(str);
     bs58::encode(hash).into_string()
+}
+
+deno_core::extension!(
+    print_extension,
+    ops = [print],
+    docs = "Extension providing printing",
+);
+
+#[op2(fast)]
+pub fn print(#[string] msg: &str, is_err: bool) -> Result<(), anyhow::Error> {
+    if is_err {
+        std::io::stderr().write_all(msg.as_bytes())?;
+        std::io::stderr().flush().unwrap();
+    } else {
+        std::io::stdout().write_all(msg.as_bytes())?;
+        std::io::stdout().flush().unwrap();
+    }
+    Ok(())
 }

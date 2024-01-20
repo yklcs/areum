@@ -86,28 +86,32 @@ impl SrcFs {
     }
 
     pub async fn find(&self, path: impl AsRef<Path>) -> Option<SrcFile> {
-        let resolved = self.root().await.join(path);
-        self.lock()
-            .await
-            .iter()
-            .find(|&f| f.path == resolved)
-            .map(Clone::clone)
-    }
+        let resolved = self.root().await.join(&path);
+        let guard = self.lock().await;
 
-    pub async fn find_page_src(&self, path: impl AsRef<Path>) -> Option<SrcFile> {
-        let resolved = self.root().await.join(path);
-        self.lock()
-            .await
-            .iter_pages()
-            .find(
-                // looking for /page
-                |&f| {
-                    f.path.with_extension("") == resolved // /page.jsx
-                        || f.path.with_extension("") == resolved.join("index")
-                    // /page/index.jsx
-                },
-            )
-            .map(Clone::clone)
+        let found = if let Some(found) = guard.iter().find(|&f| {
+            f.path == resolved // direct match
+        }) {
+            found
+        } else if let Some(found) = guard.iter().find(|&f| {
+            f.path.with_extension("") == resolved // page.jsx
+        }) {
+            found
+        } else if let Some(found) = guard.iter().find(|&f| {
+            f.path.with_extension("") == resolved.join("index") // page/index.jsx
+        }) {
+            found
+        } else if let Some(found) = guard.iter().find(|&f| {
+            f.path.with_extension("") == resolved.parent().unwrap_or(&resolved).join("_")
+            // _.jsx
+        }) {
+            found
+        } else {
+            return None;
+        }
+        .clone();
+
+        return Some(found);
     }
 
     pub async fn site_path(&self, src: &SrcFile) -> Result<PathBuf, anyhow::Error> {
@@ -154,6 +158,7 @@ pub struct SrcFile {
     pub path: PathBuf,
     pub kind: SrcKind,
     pub underscore: bool,
+    pub generator: bool,
 }
 
 impl From<ignore::DirEntry> for SrcFile {
@@ -167,6 +172,13 @@ impl From<ignore::DirEntry> for SrcFile {
                 .unwrap()
                 .to_string_lossy()
                 .starts_with("_"),
+            generator: dir
+                .path()
+                .with_extension("")
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                == "_",
         }
     }
 }

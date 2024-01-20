@@ -87,7 +87,7 @@ impl deno_graph::source::Loader for Loader {
             Ok(Some(deno_graph::source::LoadResponse::Module {
                 content: code.into(),
                 specifier,
-                maybe_headers: None,
+                maybe_headers: Some(HashMap::from([("content-type".into(), "text/tsx".into())])),
             }))
         }
         .boxed_local()

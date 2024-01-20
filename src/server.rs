@@ -1,5 +1,6 @@
 use std::{
     path::{Path, PathBuf},
+    str::FromStr,
     sync::Arc,
     thread::{self, JoinHandle},
 };
@@ -15,7 +16,11 @@ use axum::{
 use tokio::sync::{broadcast, mpsc, oneshot, Mutex};
 use url::Url;
 
-use crate::{env::Env, page::Page, src_fs::SrcFs};
+use crate::{
+    env::Env,
+    page::Page,
+    src_fs::{SrcFs, SrcKind},
+};
 
 pub struct Server {
     router: Router,
@@ -50,6 +55,8 @@ fn spawn_env(root: &PathBuf) -> (JoinHandle<()>, mpsc::Sender<Message>, mpsc::Se
             loop {
                 tokio::select! {
                     Some(Message { responder, url, path}) = rx_job.recv() => {
+                        println!("{} {:?}", url, path);
+
                         let mut page = match Page::new(&mut env, &url, &path).await {
                             Ok(page) => page,
                             Err(err) => {
@@ -68,7 +75,15 @@ fn spawn_env(root: &PathBuf) -> (JoinHandle<()>, mpsc::Sender<Message>, mpsc::Se
                         ));
                         env.bundler.push(format!(
                             r#"
-                            import {{ default as Page }} from "{}"
+                            import {{ default as mod }} from "{}"
+
+                            let Page;
+                            if (typeof mod === "function") {{
+                                Page = mod;
+                            }} else {{
+                                Page = mod["{}"];
+                            }}
+
                             if (!("Deno" in window)) {{
                                 if (Page.script) {{
                                     Page.script()
@@ -76,7 +91,8 @@ fn spawn_env(root: &PathBuf) -> (JoinHandle<()>, mpsc::Sender<Message>, mpsc::Se
                                 runScript(Page())
                             }}
                             "#,
-                            url.to_string()
+                            url.to_string(),
+                            path.to_string_lossy()
                         ));
 
                         page.script = env.bundle().await?;
@@ -187,17 +203,18 @@ async fn get_page(
     tx: Arc<Mutex<mpsc::Sender<Message>>>,
 ) -> Result<impl IntoResponse, ServerError> {
     let abspath = request.uri().path();
-    let relpath = abspath.strip_prefix("/").unwrap_or(abspath);
+    let relpath = abspath.trim_matches('/');
 
-    if let Some(file) = src_fs.find(relpath).await {
-        return Ok(src_fs.read(&file)?.into_response());
-    }
-
-    let (url, path) = if let Some(file) = src_fs.find_page_src(relpath).await {
-        (
-            Url::from_file_path(&file.path).unwrap(),
-            src_fs.site_path(&file).await?,
-        )
+    let (url, path) = if let Some(file) = src_fs.find(relpath).await {
+        match file.kind {
+            SrcKind::Jsx | SrcKind::Mdx => (
+                Url::from_file_path(&file.path).unwrap(),
+                PathBuf::from_str(relpath).unwrap(),
+            ),
+            _ => {
+                return Ok(src_fs.read(&file)?.into_response());
+            }
+        }
     } else {
         return Err(anyhow!("could not find page").into());
     };
