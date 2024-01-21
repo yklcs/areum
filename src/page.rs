@@ -1,4 +1,4 @@
-use std::{collections::HashSet, convert::Infallible, io, path::Path};
+use std::{collections::HashSet, convert::Infallible, io, path::{Path, PathBuf}};
 
 use anyhow::anyhow;
 
@@ -23,66 +23,23 @@ use crate::{
 };
 
 pub struct Page {
-    url: Url,
-    arena: Arena,
-    dom: ArenaId,
-    style: String,
-    scopes: HashSet<String>,
+    pub(crate) path: PathBuf,
+    pub(crate) url: Url,
+    pub(crate) arena: Arena,
+    pub(crate) dom: ArenaId,
+    pub(crate) style: String,
+    pub(crate) scopes: HashSet<String>,
     pub(crate) script: String,
-    id: String,
+    pub(crate) id: String,
 }
 
 #[derive(Serialize)]
-struct PageProps {
-    path: String,
-    generator: String,
+pub struct PageProps {
+    pub path: String,
+    pub generator: String,
 }
 
 impl Page {
-    pub async fn new(env: &mut Env, url: &Url, path: &Path) -> Result<Self, anyhow::Error> {
-        env.runtime.add_root(url).await;
-
-        let props = PageProps {
-            path: path.to_string_lossy().into(),
-            generator: format!("Areum {}", env!("CARGO_PKG_VERSION")),
-        };
-
-        let mut arena = Arena::new();
-        let boxed: BoxedElement = env
-            .runtime
-            .call_by_name(Env::LOADER_FN_KEY, &[&url.to_string(), &props])
-            .await?;
-        let dom = ArenaElement::from_boxed(&mut arena, &boxed, None);
-
-        let hash = Blake2b::<consts::U6>::digest(url.to_string());
-        let id = bs58::encode(hash).into_string();
-
-        let script = format!(
-            r#"
-        import {{ page{} as Page, runScript }} from "/index.js"
-        if (!("Deno" in window)) {{
-            if (Page.script) {{
-                Page.script()
-            }}
-            runScript(Page())
-        }}
-        "#,
-            id
-        );
-
-        let page = Self {
-            url: url.clone(),
-            arena,
-            dom,
-            style: String::new(),
-            scopes: HashSet::new(),
-            script,
-            id,
-        };
-
-        Ok(page)
-    }
-
     pub fn id(&self) -> String {
         self.id.clone()
     }

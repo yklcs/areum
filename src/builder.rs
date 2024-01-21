@@ -1,3 +1,4 @@
+use deno_core::v8;
 use std::{
     fs,
     io::{self, Write},
@@ -30,14 +31,26 @@ impl Builder {
         self.src_fs.scan().await?;
         fs::create_dir_all(outdir)?;
 
+        let mut pages = Vec::new();
+
         for src in self.src_fs.lock().await.iter_pages() {
             let url = Url::from_file_path(&src.path).unwrap();
-
             let path = self.src_fs.site_path(src).await?;
+            let page = self.env.new_page(&url, &path).await?;
+            pages.push(page);
+        }
 
-            let mut page = Page::new(&mut self.env, &url, &path).await?;
+        for src in self.src_fs.lock().await.iter_generators() {
+            let url = Url::from_file_path(&src.path).unwrap();
+            let mut pages_ = self.env.new_pages(&url).await?;
+            pages.append(&mut pages_);
+        }
 
-            let f = self.src_fs.out_file(&src, outdir).await?;
+        for mut page in pages {
+            let out = outdir.join(&page.path).join("index.html");
+            fs::create_dir_all(out.parent().unwrap())?;
+            let f = fs::File::create(out)?;
+
             let mut w = io::BufWriter::new(f);
             page.render(&mut w)?;
             w.flush()?;
@@ -46,7 +59,7 @@ impl Builder {
                 r#"export {{ default as page{} }} from "{}"
                 "#,
                 page.id(),
-                url.to_string()
+                page.url.to_string()
             ));
         }
 

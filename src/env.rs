@@ -1,4 +1,9 @@
-use std::{io::Write, path::Path};
+use std::{
+    collections::{HashMap, HashSet},
+    io::Write,
+    path::{Path, PathBuf},
+    str::FromStr,
+};
 
 use blake2::{digest::consts, Blake2b, Digest};
 use deno_core::{op2, v8};
@@ -7,13 +12,22 @@ use rand::{distributions::Alphanumeric, Rng};
 // use sha2::{Digest, Sha256};
 use url::Url;
 
+use crate::{
+    dom::{
+        arena::{Arena, ArenaElement},
+        boxed::BoxedElement,
+    },
+    page::{Page, PageProps},
+};
+
 pub struct Env {
     pub runtime: Runtime,
     pub bundler: Bundler,
 }
 
 impl Env {
-    pub const LOADER_FN_KEY: &'static str = "loader";
+    pub const LOADER_FN_KEY: &'static str = "load";
+    pub const GENERATOR_LOADER_FN_KEY: &'static str = "loadGenerator";
 
     pub fn new(root: &Path) -> Result<Self, anyhow::Error> {
         let runtime = Runtime::new(
@@ -31,6 +45,115 @@ impl Env {
             runtime,
             bundler: Bundler::new(),
         })
+    }
+
+    pub async fn new_page(&mut self, url: &Url, path: &Path) -> Result<Page, anyhow::Error> {
+        self.runtime.add_root(url).await;
+
+        let props = PageProps {
+            path: path.to_string_lossy().into(),
+            generator: format!("Areum {}", env!("CARGO_PKG_VERSION")),
+        };
+
+        let mut arena = Arena::new();
+        let obj_global: v8::Global<v8::Object> = self
+            .runtime
+            .call_by_name(Env::LOADER_FN_KEY, &[&url.to_string(), &props])
+            .await?;
+        let scope = &mut self.runtime.scope();
+        let obj = v8::Local::new(scope, obj_global);
+        let boxed: BoxedElement = serde_v8::from_v8(scope, obj.into())?;
+
+        let dom = ArenaElement::from_boxed(&mut arena, &boxed, None);
+
+        let hash = Blake2b::<consts::U6>::digest(url.to_string());
+        let id = bs58::encode(hash).into_string();
+
+        let script = format!(
+            r#"
+        import {{ page{} as Page, runScript }} from "/index.js"
+        if (!("Deno" in window)) {{
+            if (Page.script) {{
+                Page.script()
+            }}
+            runScript(Page())
+        }}
+        "#,
+            id
+        );
+
+        let page = Page {
+            path: path.to_path_buf(),
+            url: url.clone(),
+            arena,
+            dom,
+            style: String::new(),
+            scopes: HashSet::new(),
+            script,
+            id,
+        };
+
+        Ok(page)
+    }
+
+    pub async fn new_pages(&mut self, url: &Url) -> Result<Vec<Page>, anyhow::Error> {
+        self.runtime.add_root(url).await;
+
+        let path = url
+            .to_file_path()
+            .unwrap()
+            .strip_prefix(self.runtime.root())?
+            .parent()
+            .unwrap()
+            .to_path_buf();
+
+        let props = PageProps {
+            path: path.to_string_lossy().into(),
+            generator: format!("Areum {}", env!("CARGO_PKG_VERSION")),
+        };
+
+        let map_global: v8::Global<v8::Map> = self
+            .runtime
+            .call_by_name(Env::GENERATOR_LOADER_FN_KEY, &[&url.to_string(), &props])
+            .await?;
+        let scope = &mut self.runtime.scope();
+        let map = v8::Local::new(scope, map_global);
+        let boxeds: HashMap<String, BoxedElement> = serde_v8::from_v8(scope, map.into())?;
+
+        boxeds
+            .into_iter()
+            .map(|(path, boxed)| {
+                let mut arena = Arena::new();
+                let dom = ArenaElement::from_boxed(&mut arena, &boxed, None);
+
+                let hash = Blake2b::<consts::U6>::digest(url.to_string());
+                let id = bs58::encode(hash).into_string();
+
+                let script = format!(
+                    r#"
+            import {{ page{} as Page, runScript }} from "/index.js"
+            if (!("Deno" in window)) {{
+                if (Page.script) {{
+                    Page.script()
+                }}
+                runScript(Page())
+            }}
+            "#,
+                    id
+                );
+
+                Ok(Page {
+                    path: PathBuf::from_str(&path)?,
+                    url: url.clone(),
+                    arena,
+                    dom,
+                    style: String::new(),
+                    scopes: HashSet::new(),
+                    script,
+                    id,
+                })
+            })
+            .collect()
     }
 
     pub async fn bundle(&mut self) -> Result<String, anyhow::Error> {
@@ -76,11 +199,20 @@ impl Env {
 
         let loader = self
             .runtime
-            .export::<v8::Function>(loader_mod, "default")
+            .export::<v8::Function>(loader_mod, Self::LOADER_FN_KEY)
             .await?;
         self.runtime
             .functions
             .insert(Self::LOADER_FN_KEY.into(), loader.into());
+
+        let generator_loader = self
+            .runtime
+            .export::<v8::Function>(loader_mod, Self::GENERATOR_LOADER_FN_KEY)
+            .await?;
+        self.runtime.functions.insert(
+            Self::GENERATOR_LOADER_FN_KEY.into(),
+            generator_loader.into(),
+        );
 
         Ok(())
     }
@@ -131,7 +263,7 @@ fn hashString(#[string] str: String) -> String {
 
 deno_core::extension!(
     print_extension,
-    ops = [print],
+    ops = [print, join_path],
     docs = "Extension providing printing",
 );
 
@@ -145,4 +277,10 @@ pub fn print(#[string] msg: &str, is_err: bool) -> Result<(), anyhow::Error> {
         std::io::stdout().flush().unwrap();
     }
     Ok(())
+}
+
+#[op2]
+#[string]
+pub fn join_path(#[string] root: &str, #[string] to_join: &str) -> String {
+    Path::new(root).join(to_join).to_string_lossy().to_string()
 }

@@ -23,6 +23,13 @@ impl SrcFsGuard<'_> {
         self.0.entries.iter()
     }
 
+    pub fn iter_generators(&self) -> impl Iterator<Item = &SrcFile> + '_ {
+        self.iter().filter(|f| match f.kind {
+            SrcKind::Jsx | SrcKind::Mdx if f.generator => true,
+            _ => false,
+        })
+    }
+
     pub fn iter_pages(&self) -> impl Iterator<Item = &SrcFile> + '_ {
         self.iter().filter(|f| match f.kind {
             SrcKind::Jsx | SrcKind::Mdx if !f.underscore => true,

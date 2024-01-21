@@ -1,11 +1,12 @@
 use std::{
+    ffi::OsStr,
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
     thread::{self, JoinHandle},
 };
 
-use anyhow::anyhow;
+use anyhow::{anyhow, Context};
 use axum::{
     extract::Request,
     http::StatusCode,
@@ -38,6 +39,7 @@ struct Message {
     url: Url,
     path: PathBuf,
     responder: oneshot::Sender<Result<Page, anyhow::Error>>,
+    generator: bool,
 }
 
 fn spawn_env(root: &PathBuf) -> (JoinHandle<()>, mpsc::Sender<Message>, mpsc::Sender<bool>) {
@@ -54,14 +56,25 @@ fn spawn_env(root: &PathBuf) -> (JoinHandle<()>, mpsc::Sender<Message>, mpsc::Se
 
             loop {
                 tokio::select! {
-                    Some(Message { responder, url, path}) = rx_job.recv() => {
-                        println!("{} {:?}", url, path);
-
-                        let mut page = match Page::new(&mut env, &url, &path).await {
-                            Ok(page) => page,
-                            Err(err) => {
-                                responder.send(Err(anyhow!("{}", err))).unwrap_or_else(|_| panic!("error sending to channel"));
-                                return Err(err);
+                    Some(Message { responder, url, path, generator }) = rx_job.recv() => {
+                        let mut page = if generator {
+                            match env.new_pages(&url).await {
+                                Ok(pages) => {
+                                    println!("{:?}", path);
+                                    pages.into_iter().find(|page| page.path == path).context("could not find page")?
+                                },
+                                Err(err) => {
+                                    responder.send(Err(anyhow!("{}", err))).unwrap_or_else(|_| panic!("error sending to channel"));
+                                    return Err(err);
+                                }
+                            }
+                        } else {
+                            match env.new_page(&url, &path).await {
+                                Ok(page) => page,
+                                Err(err) => {
+                                    responder.send(Err(anyhow!("{}", err))).unwrap_or_else(|_| panic!("error sending to channel"));
+                                    return Err(err);
+                               }
                             }
                         };
 
@@ -205,11 +218,12 @@ async fn get_page(
     let abspath = request.uri().path();
     let relpath = abspath.trim_matches('/');
 
-    let (url, path) = if let Some(file) = src_fs.find(relpath).await {
+    let (url, path, generator) = if let Some(file) = src_fs.find(relpath).await {
         match file.kind {
             SrcKind::Jsx | SrcKind::Mdx => (
                 Url::from_file_path(&file.path).unwrap(),
                 PathBuf::from_str(relpath).unwrap(),
+                file.generator,
             ),
             _ => {
                 return Ok(src_fs.read(&file)?.into_response());
@@ -225,6 +239,7 @@ async fn get_page(
         .send(Message {
             url,
             path,
+            generator,
             responder: tx_page,
         })
         .await
