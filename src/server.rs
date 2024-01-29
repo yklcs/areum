@@ -8,7 +8,7 @@ use std::{
 use anyhow::{anyhow, Context};
 use axum::{
     extract::Request,
-    http::StatusCode,
+    http::{header, StatusCode},
     response::{Html, IntoResponse, Response},
     routing, Router,
 };
@@ -219,6 +219,18 @@ async fn get_page(
                 PathBuf::from_str(relpath).unwrap(),
                 file.generator,
             ),
+            SrcKind::Css => {
+                return Ok(
+                    ([(header::CONTENT_TYPE, "text/css")], src_fs.read(&file)?).into_response()
+                );
+            }
+            SrcKind::Js => {
+                return Ok((
+                    [(header::CONTENT_TYPE, "text/javascript")],
+                    src_fs.read(&file)?,
+                )
+                    .into_response());
+            }
             _ => {
                 return Ok(src_fs.read(&file)?.into_response());
             }
