@@ -196,9 +196,9 @@ impl Runtime {
         &mut self,
         func: &Function,
         args: &[&dyn erased_serde::Serialize],
-    ) -> Result<v8::Global<T>, anyhow::Error>
+    ) -> Result<T, anyhow::Error>
     where
-        for<'a> v8::Local<'a, T>: TryFrom<v8::Local<'a, v8::Value>, Error = v8::DataError>,
+        T: DeserializeOwned,
     {
         let args_v8: Vec<_> = {
             let scope: &mut v8::HandleScope<'_> = &mut self.js_runtime.handle_scope();
@@ -216,8 +216,8 @@ impl Runtime {
             .with_event_loop_promise(promise, PollEventLoopOptions::default())
             .await?;
         let scope = &mut self.js_runtime.handle_scope();
-        let result_local: v8::Local<T> = v8::Local::new(scope, result_global).try_into()?;
-        let result: v8::Global<T> = v8::Global::new(scope, result_local);
+        let result_local = v8::Local::new(scope, result_global);
+        let result: T = serde_v8::from_v8(scope, result_local)?;
         Ok(result)
     }
 
@@ -225,9 +225,9 @@ impl Runtime {
         &mut self,
         func: &str,
         args: &[&dyn erased_serde::Serialize],
-    ) -> Result<v8::Global<T>, anyhow::Error>
+    ) -> Result<T, anyhow::Error>
     where
-        for<'a> v8::Local<'a, T>: TryFrom<v8::Local<'a, v8::Value>, Error = v8::DataError>,
+        T: DeserializeOwned,
     {
         let func = self
             .functions

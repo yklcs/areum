@@ -1,17 +1,24 @@
-const randString: (n: number) => string = Deno.core.ops.randString;
-const hashString: (str: string) => string = Deno.core.ops.hashString;
+const hashString =
+  "Deno" in globalThis ? Deno.core.ops.hashString : (str) => "";
 
-const runScript = (node: Node) => {
-  if (node.kind === "virtual" && node.script) {
-    node.script();
+const run = (page: JSX.FunctionalElement, props: JSX.PageProps) => {
+  if ("Deno" in window || typeof page !== "function") {
+    return;
   }
+  page.script?.();
+  runChildren(page(props).children);
+};
 
-  if (Array.isArray(node.children)) {
-    for (const child of node.children) {
-      runScript(child);
+const runChildren = (children?: JSX.Children) => {
+  if (typeof children === "string" || children === undefined) {
+    return;
+  } else if (Array.isArray(children)) {
+    for (const child of children) {
+      runChildren(child);
     }
-  } else if (node.children && typeof node.children !== "string") {
-    runScript(node.children);
+  } else {
+    children?.element.script?.();
+    runChildren(children?.children);
   }
 };
 
@@ -196,4 +203,4 @@ namespace JSX {
   }
 }
 
-export { jsx, jsxs, Fragment, runScript, render, type JSX };
+export { jsx, jsxs, Fragment, run, render, type JSX };

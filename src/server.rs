@@ -1,5 +1,4 @@
 use std::{
-    ffi::OsStr,
     path::{Path, PathBuf},
     str::FromStr,
     sync::Arc,
@@ -80,7 +79,7 @@ fn spawn_env(root: &PathBuf) -> (JoinHandle<()>, mpsc::Sender<Message>, mpsc::Se
 
                         env.bundler.clear();
                         env.bundler.push(format!(
-                            r#"import {{ runScript }} from "{}"
+                            r#"import {{ run }} from "{}"
                             "#,
                             &Url::from_file_path(root.join("/areum/jsx-runtime"))
                                 .unwrap()
@@ -97,12 +96,7 @@ fn spawn_env(root: &PathBuf) -> (JoinHandle<()>, mpsc::Sender<Message>, mpsc::Se
                                 Page = mod["{}"];
                             }}
 
-                            if (!("Deno" in window)) {{
-                                if (Page.script) {{
-                                    Page.script()
-                                }}
-                                runScript(Page())
-                            }}
+                            run(Page, {{}})
                             "#,
                             url.to_string(),
                             path.to_string_lossy()

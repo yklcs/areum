@@ -56,13 +56,10 @@ impl Env {
         };
 
         let mut arena = Arena::new();
-        let obj_global: v8::Global<v8::Object> = self
+        let boxed: BoxedElement = self
             .runtime
             .call_by_name(Env::LOADER_FN_KEY, &[&url.to_string(), &props])
             .await?;
-        let scope = &mut self.runtime.scope();
-        let obj = v8::Local::new(scope, obj_global);
-        let boxed: BoxedElement = serde_v8::from_v8(scope, obj.into())?;
 
         let dom = ArenaElement::from_boxed(&mut arena, &boxed, None);
 
@@ -71,13 +68,8 @@ impl Env {
 
         let script = format!(
             r#"
-        import {{ page{} as Page, runScript }} from "/index.js"
-        if (!("Deno" in window)) {{
-            if (Page.script) {{
-                Page.script()
-            }}
-            runScript(Page())
-        }}
+        import {{ page{} as Page, run }} from "/index.js"
+        run(Page, {{}})
         "#,
             id
         );
@@ -91,6 +83,7 @@ impl Env {
             scopes: HashSet::new(),
             script,
             id,
+            props,
         };
 
         Ok(page)
@@ -107,18 +100,18 @@ impl Env {
             .unwrap()
             .to_path_buf();
 
-        let props = PageProps {
+        let props_temp = PageProps {
             path: path.to_string_lossy().into(),
             generator: format!("Areum {}", env!("CARGO_PKG_VERSION")),
         };
 
-        let map_global: v8::Global<v8::Map> = self
+        let boxeds: HashMap<String, BoxedElement> = self
             .runtime
-            .call_by_name(Env::GENERATOR_LOADER_FN_KEY, &[&url.to_string(), &props])
+            .call_by_name(
+                Env::GENERATOR_LOADER_FN_KEY,
+                &[&url.to_string(), &props_temp],
+            )
             .await?;
-        let scope = &mut self.runtime.scope();
-        let map = v8::Local::new(scope, map_global);
-        let boxeds: HashMap<String, BoxedElement> = serde_v8::from_v8(scope, map.into())?;
 
         boxeds
             .into_iter()
@@ -128,6 +121,11 @@ impl Env {
 
                 let hash = Blake2b::<consts::U6>::digest(url.to_string());
                 let id = bs58::encode(hash).into_string();
+
+                let props = PageProps {
+                    path: path.clone(),
+                    generator: format!("Areum {}", env!("CARGO_PKG_VERSION")),
+                };
 
                 let script = format!(
                     r#"
@@ -151,6 +149,7 @@ impl Env {
                     scopes: HashSet::new(),
                     script,
                     id,
+                    props,
                 })
             })
             .collect()

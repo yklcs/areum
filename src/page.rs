@@ -1,8 +1,7 @@
-use std::{collections::HashSet, convert::Infallible, io, path::{Path, PathBuf}};
+use std::{collections::HashSet, convert::Infallible, io, path::PathBuf};
 
 use anyhow::anyhow;
 
-use blake2::{digest::consts, Blake2b, Digest};
 use lightningcss::{
     css_modules,
     selector::{Component, PseudoClass, Selector},
@@ -13,13 +12,9 @@ use lol_html::{element, html_content::ContentType, text, HtmlRewriter};
 use serde::Serialize;
 use url::Url;
 
-use crate::{
-    dom::{
-        arena::{Arena, ArenaElement, ArenaId},
-        boxed::BoxedElement,
-        Children,
-    },
-    env::Env,
+use crate::dom::{
+    arena::{Arena, ArenaElement, ArenaId},
+    Children,
 };
 
 pub struct Page {
@@ -31,6 +26,7 @@ pub struct Page {
     pub(crate) scopes: HashSet<String>,
     pub(crate) script: String,
     pub(crate) id: String,
+    pub(crate) props: PageProps
 }
 
 #[derive(Serialize)]
@@ -231,26 +227,6 @@ impl<'i> lightningcss::visitor::Visitor<'i> for CssVisitor {
         }
 
         complex.reverse();
-
-        // while let Some(component) = it.next() {
-        //     match component {
-        //         Component::NonTSPseudoClass(PseudoClass::Global { selector }) => {
-        //             v.extend(selector.iter_raw_match_order().map(Clone::clone));
-        //             continue;
-        //         }
-        //         _ => {
-        //             v.push(component.clone());
-        //         }
-        //     }
-
-        //     match it.peek() {
-        //         Some(Component::Combinator(_)) | None => {
-        //             v.push(Component::Class(self.scope.clone().into()));
-        //         }
-        //         _ => {}
-        //     }
-        // }
-
         *selector = complex.try_into()?;
 
         Ok(())

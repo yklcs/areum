@@ -1,4 +1,3 @@
-use deno_core::v8;
 use std::{
     fs,
     io::{self, Write},
@@ -6,7 +5,7 @@ use std::{
 };
 use url::Url;
 
-use crate::{env::Env, page::Page, src_fs::SrcFs};
+use crate::{env::Env, src_fs::SrcFs};
 
 pub struct Builder {
     root: PathBuf,
